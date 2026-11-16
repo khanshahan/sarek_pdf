@@ -32,9 +32,9 @@ type Font struct {
 	missingW   float64
 	cidW       map[uint32]float64
 	dw         float64
-	cidUni     func(cid uint32) rune // from the embedded font program
-	collection map[uint32]rune       // from a user-supplied CID map
-	uniCache   sync.Map              // composite code -> string
+	cidUni     func(cid uint32) string // from the embedded font program
+	collection map[uint32]rune         // from a user-supplied CID map
+	uniCache   sync.Map                // composite code -> string
 }
 
 // Glyph is one decoded character code.
@@ -502,9 +502,7 @@ func (f *Font) compositeText(code uint32, n int, cid uint32) string {
 		t, _ = f.toUnicode.Lookup(code, n)
 	}
 	if t == "" && f.cidUni != nil {
-		if r := f.cidUni(cid); r != 0 {
-			t = string(r)
-		}
+		t = f.cidUni(cid)
 	}
 	if t == "" && f.collection != nil {
 		if r, ok := f.collection[cid]; ok {

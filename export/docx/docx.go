@@ -396,6 +396,11 @@ func (x *writer) image(im *model.Image) {
 	if len(im.Data) == 0 {
 		return
 	}
+	// Images of a few pixels are solid fills stretched as backgrounds or
+	// rules, not pictures; they only clutter the document.
+	if im.Width <= 4 || im.Height <= 4 {
+		return
+	}
 	rid := x.addMedia(ext, ct, im.Data)
 	cx, cy := x.fit(im.BBox)
 	x.inlinePic(cx, cy, fmt.Sprintf(`<a:blip r:embed="%s"/>`, rid))

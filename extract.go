@@ -87,6 +87,8 @@ func (d *Document) extractPage(ctx context.Context, n int) (pg *model.Page, err 
 		}
 	}
 	blocks := layout.Analyze(res, imgs, lopts)
+	// Must run before the glyph buffer is recycled below.
+	noTextLayer := (ocrInfo == nil || ocrInfo.Lines == 0) && textLayerProblem(res) != ""
 	// Layout copies everything it keeps; recycle the glyph buffer.
 	if cap(res.Glyphs) <= 1<<20 {
 		clear(res.Glyphs)
@@ -94,9 +96,7 @@ func (d *Document) extractPage(ctx context.Context, n int) (pg *model.Page, err 
 		glyphPool.Put(gb)
 	}
 	page := &model.Page{Number: n, Width: res.Width, Height: res.Height, Blocks: blocks, OCR: ocrInfo}
-	if ocrInfo == nil || ocrInfo.Lines == 0 {
-		page.NoTextLayer = textLayerProblem(res) != ""
-	}
+	page.NoTextLayer = noTextLayer
 	if d.cfg.rules {
 		normalizePage(page)
 	}

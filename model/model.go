@@ -260,8 +260,9 @@ func (t *Table) NumRows() int { return max(0, len(t.RowY)-1) }
 // NumCols returns the number of grid columns.
 func (t *Table) NumCols() int { return max(0, len(t.ColX)-1) }
 
-// Grid returns a NumRows×NumCols matrix of cell texts (spanned cells are
-// repeated across their span).
+// Grid returns a NumRows×NumCols matrix of cell texts with merged cells
+// repeated across their span (convenient for lookups). For text output,
+// where each cell must appear once, use Rows.
 func (t *Table) Grid() [][]string {
 	g := make([][]string, t.NumRows())
 	for i := range g {
@@ -273,6 +274,22 @@ func (t *Table) Grid() [][]string {
 			for k := c.Col; k < c.Col+c.ColSpan && k < len(g[r]); k++ {
 				g[r][k] = txt
 			}
+		}
+	}
+	return g
+}
+
+// Rows returns a NumRows×NumCols matrix of cell texts where a merged
+// cell's text appears only once, at its top-left grid position; the
+// other positions it covers are empty. Use this for text output.
+func (t *Table) Rows() [][]string {
+	g := make([][]string, t.NumRows())
+	for i := range g {
+		g[i] = make([]string, t.NumCols())
+	}
+	for _, c := range t.Cells {
+		if c.Row < len(g) && c.Col < len(g[c.Row]) {
+			g[c.Row][c.Col] = c.Text()
 		}
 	}
 	return g
@@ -393,7 +410,7 @@ func (p *Page) Text() string {
 		case *Paragraph:
 			sb.WriteString(v.Text())
 		case *Table:
-			for r, row := range v.Grid() {
+			for r, row := range v.Rows() {
 				if r > 0 {
 					sb.WriteByte('\n')
 				}

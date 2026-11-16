@@ -25,7 +25,9 @@ type frag struct {
 	used     bool
 	lastX1   float64
 	pendSp   bool
-	tb       [][]byte // span text under construction (see finalize)
+	dir      model.Point // rotated text: unit advance direction
+	lastEnd  model.Point // rotated text: end of the previous glyph
+	tb       [][]byte    // span text under construction (see finalize)
 }
 
 // finalize converts the byte buffers into span strings (one allocation
@@ -132,9 +134,24 @@ func buildFragments(glyphs []content.Glyph, page model.Rect) []*frag {
 		nRecent++
 		st := styleOf(g)
 		if !g.Horizontal() {
-			// Rotated/vertical text: group sequential glyphs with same direction.
-			if cur == nil || !cur.rotated || dist(g.Origin, model.Point{X: cur.bbox.X1, Y: cur.bbox.Y1}) > 3*g.Size && !near(cur.bbox, bb, g.Size) {
-				cur = &frag{rotated: true, size: g.Size, bbox: bb}
+			// Rotated/vertical text: continue the run only when the glyph
+			// follows on along the same writing direction.
+			ul := math.Hypot(g.Up.X, g.Up.Y)
+			dir := model.Point{X: -g.Up.Y / ul, Y: g.Up.X / ul}
+			cont := false
+			if cur != nil && cur.rotated && cur.dir.X*dir.X+cur.dir.Y*dir.Y > 0.99 {
+				dx, dy := g.Origin.X-cur.lastEnd.X, g.Origin.Y-cur.lastEnd.Y
+				along := dx*dir.X + dy*dir.Y
+				across := math.Abs(-dx*dir.Y + dy*dir.X)
+				if across < 0.3*g.Size && along > -0.3*g.Size && along < 1.0*g.Size {
+					cont = true
+					if along > 0.15*g.Size {
+						cur.pendSp = true
+					}
+				}
+			}
+			if !cont {
+				cur = &frag{rotated: true, size: g.Size, bbox: bb, dir: dir}
 				out = append(out, cur)
 			}
 			if cur.pendSp {
@@ -142,6 +159,7 @@ func buildFragments(glyphs []content.Glyph, page model.Rect) []*frag {
 				cur.pendSp = false
 			}
 			cur.appendText(text, bb.X0, bb.X1, st, bb, g.Invisible)
+			cur.lastEnd = g.End
 			continue
 		}
 		x0, x1 := g.Origin.X, max(g.End.X, g.Origin.X)

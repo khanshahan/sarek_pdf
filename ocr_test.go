@@ -148,3 +148,30 @@ func TestOCRNeverWithoutEngineOrMode(t *testing.T) {
 		t.Error("ocr.Never must not call the engine")
 	}
 }
+
+// Regression: a normal text page must never be flagged NoTextLayer (the
+// flag was once computed after the glyph buffer had been recycled).
+func TestTextPageNotFlagged(t *testing.T) {
+	doc, _ := OpenBytes(scannedPDF())
+	res, _ := doc.Extract(context.Background())
+	// A page with a large image AND a full text layer.
+	b := &testpdf.Builder{Compress: true}
+	var text string
+	for l := 0; l < 10; l++ {
+		text += testpdf.Text("F1", 11, 72, 700-float64(l)*14, "This page has a real text layer over a background picture.")
+	}
+	b.AddImagePage("q 612 0 0 792 0 0 cm /Im1 Do Q\n"+text, testpdf.Image{W: 10, H: 10, Gray: bytes.Repeat([]byte{200}, 100)})
+	mixed := b.Bytes()
+	for i := 0; i < 3; i++ { // reuse pooled buffers
+		doc2, _ := OpenBytes(mixed, WithPageCache(false))
+		r2, _ := doc2.Extract(context.Background())
+		for _, p := range r2.Pages {
+			if p.NoTextLayer {
+				t.Fatalf("text page %d flagged NoTextLayer", p.Number)
+			}
+		}
+	}
+	if !res.Pages[0].NoTextLayer {
+		t.Fatal("scanned page must be flagged")
+	}
+}
