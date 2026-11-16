@@ -24,6 +24,9 @@ type Font struct {
 	// TeXSymbols marks TeX math symbol fonts (CMSY), whose radical sign
 	// also hangs below the origin.
 	TeXSymbols bool
+	// Math marks mathematics fonts (TeX math fonts, Cambria Math, STIX
+	// Math, Symbol, …), decided once when the font is loaded.
+	Math       bool
 	Ascent     float64 // in text space units (per 1 unit of font size)
 	Descent    float64 // negative
 	Vertical   bool
@@ -156,6 +159,7 @@ func load(r *pdf.Reader, d pdf.Dict, cidMaps map[string]map[uint32]rune) *Font {
 		}
 	}
 	f.TeXSymbols = strings.HasPrefix(ln, "cmsy") || strings.HasPrefix(ln, "lmmathsymbols") || strings.HasPrefix(ln, "cmbsy")
+	f.Math = IsMathFontName(f.Name)
 	if subtype == "Type3" {
 		f.type3 = true
 		if m := r.Numbers(d["FontMatrix"]); len(m) == 6 && m[0] != 0 {
@@ -477,6 +481,26 @@ func builtinType1Encoding(r *pdf.Reader, desc pdf.Dict) (Encoding, bool) {
 		}
 	}
 	return e, found
+}
+
+// mathFontPrefixes identifies mathematics fonts by (subset-stripped) name.
+var mathFontPrefixes = []string{
+	"cmmi", "cmsy", "cmex", "cmbsy", "cmmib", "msam", "msbm", "eufm", "eusm", "rsfs", "esint",
+	"lmmathitalic", "lmmathsymbols", "lmmathextension", "stixmath", "stixtwomath", "cambriamath",
+	"cambria math", "latinmodernmath", "xitsmath", "texgyre", "asanamath", "mathematicalpi",
+	"mt extra", "mtextra", "euclid", "symbol", "txsy", "txmi", "txex", "pxsy", "pxmi", "pxex",
+	"ntxmi", "ntxsy", "ntxexx", "zxmi", "rtxmi", "mathjax", "ncm", "fourier-math",
+}
+
+// IsMathFontName reports whether a font name denotes a mathematics font.
+func IsMathFontName(name string) bool {
+	n := strings.ToLower(name)
+	for _, p := range mathFontPrefixes {
+		if strings.HasPrefix(n, p) {
+			return true
+		}
+	}
+	return strings.Contains(n, "math") && !strings.Contains(n, "mathilde")
 }
 
 // Composite reports whether the font is a Type0 font.

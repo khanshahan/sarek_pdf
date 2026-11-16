@@ -508,31 +508,37 @@ func (in *Interpreter) showText(s []byte) {
 	}
 	size := gs.fontSize
 	invisible := gs.render == 3 || gs.render == 7
+	// Glyph k is rendered with Trm = [size·h 0 0 size tx_k rise] × A,
+	// A = Tm × CTM fixed for the whole string; only tx_k advances.
+	A := in.tm.Mul(gs.ctm)
+	sh := size * gs.hscale
+	tx, ty := 0.0, 0.0 // accumulated advance in unscaled text space
 	f.Decode(s, func(g font.Glyph) {
-		trm := Matrix{size * gs.hscale, 0, 0, size, 0, gs.rise}.Mul(in.tm).Mul(gs.ctm)
 		w0 := g.Width
 		if f.Vertical {
-			origin := trm.Apply(0, 0)
-			up := trm.ApplyVec(0, 1)
-			in.emit(g, origin, trm.Apply(1, 0), up, invisible)
-			ty := -(1.0*size + gs.charSpace)
+			// Vertical writing: advance downwards in text space.
+			origin := A.Apply(tx, gs.rise+ty)
+			end := A.Apply(tx+sh, gs.rise+ty)
+			up := A.ApplyVec(0, size)
+			in.emit(g, origin, end, up, invisible)
+			adv := -(1.0*size + gs.charSpace)
 			if g.Space {
-				ty -= gs.wordSpace
+				adv -= gs.wordSpace
 			}
-			in.tm = Matrix{1, 0, 0, 1, 0, ty}.Mul(in.tm)
+			ty += adv
 			return
 		}
-		origin := trm.Apply(0, 0)
-		end := trm.Apply(w0, 0)
-		up := trm.ApplyVec(0, 1)
+		origin := A.Apply(tx, gs.rise)
+		end := A.Apply(tx+w0*sh, gs.rise)
+		up := A.ApplyVec(0, size)
 		in.emit(g, origin, end, up, invisible)
-		tx := w0*size + gs.charSpace
+		adv := w0*size + gs.charSpace
 		if g.Space {
-			tx += gs.wordSpace
+			adv += gs.wordSpace
 		}
-		tx *= gs.hscale
-		in.tm = Matrix{1, 0, 0, 1, tx, 0}.Mul(in.tm)
+		tx += adv * gs.hscale
 	})
+	in.tm = Matrix{1, 0, 0, 1, tx, ty}.Mul(in.tm)
 }
 
 func (in *Interpreter) emit(g font.Glyph, origin, end, up model.Point, invisible bool) {

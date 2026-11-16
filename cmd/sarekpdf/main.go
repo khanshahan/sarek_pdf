@@ -17,6 +17,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"runtime/pprof"
 	"strings"
 	"time"
 
@@ -69,6 +71,8 @@ func main() {
 	embed := fs.Bool("embed-images", false, "xml: embed image data as base64")
 	geometry := fs.Bool("geometry", true, "xml: include line/span coordinates")
 	timeout := fs.Duration("timeout", 0, "overall timeout (e.g. 2m)")
+	cpuProfile := fs.String("cpuprofile", "", "write a CPU profile (development)")
+	memProfile := fs.String("memprofile", "", "write a heap profile at exit (development)")
 	ocrModels := fs.String("ocr-models", "", "OCR fallback: PaddleOCR ONNX model directory (binary built with -tags onnx)")
 	ocrLang := fs.String("ocr-lang", "english", "OCR recognition model: english, latin, eslav, greek, korean, chinese, …")
 	ocrModeF := fs.String("ocr-mode", "auto", "OCR mode: auto (pages without text layer), always, never")
@@ -79,6 +83,21 @@ func main() {
 	}
 	src := fs.Arg(0)
 
+	if *cpuProfile != "" {
+		f, err := os.Create(*cpuProfile)
+		check(err)
+		check(pprof.StartCPUProfile(f))
+		defer pprof.StopCPUProfile()
+	}
+	if *memProfile != "" {
+		defer func() {
+			f, err := os.Create(*memProfile)
+			check(err)
+			runtime.GC()
+			check(pprof.WriteHeapProfile(f))
+			f.Close()
+		}()
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	if *timeout > 0 {

@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/khanshahan/sarek_pdf/internal/content"
+	"github.com/khanshahan/sarek_pdf/internal/font"
 	"github.com/khanshahan/sarek_pdf/model"
 )
 
@@ -19,24 +20,7 @@ import (
 // bars and radical bars. Display formulas become model.Formula blocks;
 // inline math stays in the paragraph text with Span.Math set.
 
-// mathFontPrefixes identifies mathematics fonts by (subset-stripped) name.
-var mathFontPrefixes = []string{
-	"cmmi", "cmsy", "cmex", "cmbsy", "cmmib", "msam", "msbm", "eufm", "eusm", "rsfs", "esint",
-	"lmmathitalic", "lmmathsymbols", "lmmathextension", "stixmath", "stixtwomath", "cambriamath",
-	"cambria math", "latinmodernmath", "xitsmath", "texgyre", "asanamath", "mathematicalpi",
-	"mt extra", "mtextra", "euclid", "symbol", "txsy", "txmi", "txex", "pxsy", "pxmi", "pxex",
-	"ntxmi", "ntxsy", "ntxexx", "zxmi", "rtxmi", "mathjax", "ncm", "fourier-math",
-}
-
-func isMathFontName(name string) bool {
-	n := strings.ToLower(name)
-	for _, p := range mathFontPrefixes {
-		if strings.HasPrefix(n, p) {
-			return true
-		}
-	}
-	return strings.Contains(n, "math") && !strings.Contains(n, "mathilde")
-}
+func isMathFontName(name string) bool { return font.IsMathFontName(name) }
 
 // isMathRune reports characters that only occur in mathematics.
 func isMathRune(r rune) bool {
@@ -58,7 +42,7 @@ func isMathRune(r rune) bool {
 // isMathGlyph reports whether a glyph belongs to mathematics: set in a
 // math font, or a math-only symbol.
 func isMathGlyph(g *content.Glyph, text string) bool {
-	if g.Font != nil && isMathFontName(g.Font.Name) {
+	if g.Font != nil && g.Font.Math {
 		return true
 	}
 	for _, r := range text {

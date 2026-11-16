@@ -118,8 +118,8 @@ func buildFragments(glyphs []content.Glyph, page model.Rect) []*frag {
 	var cur *frag
 	// Ring of recent glyph positions for duplicate ("fake bold") suppression.
 	type key struct {
+		x, y int32 // compared first: cheap and almost always different
 		t    string
-		x, y int32
 	}
 	var recent [64]key
 	nRecent := 0
@@ -140,10 +140,10 @@ func buildFragments(glyphs []content.Glyph, page model.Rect) []*frag {
 		if text == "" {
 			text = unmapped
 		}
-		k := key{text, int32(math.Round(g.Origin.X * 2)), int32(math.Round(g.Origin.Y * 2))}
+		k := key{int32(math.Round(g.Origin.X * 2)), int32(math.Round(g.Origin.Y * 2)), text}
 		dup := false
 		for j := 0; j < min(nRecent, len(recent)); j++ {
-			if recent[j] == k {
+			if r := &recent[j]; r.x == k.x && r.y == k.y && r.t == k.t {
 				dup = true
 				break
 			}
