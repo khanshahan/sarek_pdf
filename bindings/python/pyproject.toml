@@ -3,6 +3,5 @@ name = "sarek-pdf"
 version = "0.1.0"
 description = "Python bindings for the sarek_pdf native library"
 requires-python = ">=3.8"
-# MIT with patent reservation (see LICENSE). It is a modified MIT license,
-# so no "MIT License" trove classifier is declared.
 license = { file = "LICENSE" }
+classifiers = ["License :: OSI Approved :: MIT License"]

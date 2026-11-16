@@ -12,8 +12,8 @@ recorded in the *Amendment log* at the end of this file.
 
 sarek_pdf is a high-performance, scalable, maintainable **Go** library for
 extracting content from PDF files (PDF 1.5, 1.6, 1.7 and later, including
-PDF 2.0 where feasible). It is intended for commercial use and is licensed under MIT with a
-patent reservation (Article 2.6).
+PDF 2.0 where feasible). It is intended for commercial use and is licensed under the MIT
+License (Article 2.6).
 
 ## Article 2 — Licensing (strict)
 
@@ -34,13 +34,11 @@ patent reservation (Article 2.6).
    Apache-2.0**, must be **opt-in** (build tag or runtime configuration),
    and must never be required to build or use the core library.
    Model weights recommended in documentation must be MIT or Apache-2.0.
-6. The project license is **MIT with a patent reservation** (see
-   `LICENSE`): the MIT copyright permissions, plus an explicit clause that
-   no patent rights are granted, expressly or by implication. The
-   reservation must be kept in every copy. The project must **not** adopt
-   any license that contains a patent grant (e.g. Apache-2.0, MPL, GPLv3)
-   for its own code, and contributions must be accepted under the same
-   terms.
+6. The project license is the standard **MIT License** (see `LICENSE`),
+   unmodified. MIT contains no express patent grant. The project must
+   **not** adopt any license that contains an express patent grant
+   (e.g. Apache-2.0, MPL, GPLv3) for its own code, and contributions must
+   be accepted under the MIT License.
 
 ## Article 3 — Accuracy and zero hallucination
 
@@ -124,3 +122,4 @@ stable C ABI (`c-shared` build) with thin language bindings.
 | 2026-11-16 | —       | Initial version   | Project owner |
 | 2026-11-16 | 5       | Multi-column reading order; OCR fallback with mandatory OCR labelling | Project owner |
 | 2026-11-16 | 1, 2.6  | License changed from proprietary to MIT with patent reservation | Project owner |
+| 2026-11-16 | 1, 2.6  | License changed to the standard, unmodified MIT License | Project owner |
