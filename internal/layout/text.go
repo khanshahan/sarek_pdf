@@ -277,46 +277,71 @@ func hasLetter(s string) bool {
 // lowercase letters).
 func buildRuns(lines []model.Line) []model.Run {
 	var runs []model.Run
-	add := func(text string, sp model.Span) {
-		if text == "" {
+	var bufs [][]byte // text of each run under construction
+	add := func(text string, sp model.Span, extraSpace bool) {
+		if text == "" && !extraSpace {
 			return
 		}
 		if n := len(runs); n > 0 && sameStyle(runs[n-1].Style, sp.Style) && runs[n-1].Script == sp.Script &&
 			runs[n-1].Formula == nil && sp.Formula == nil &&
 			(runs[n-1].Math == sp.Math || strings.TrimSpace(text) == "") {
-			runs[n-1].Text += text
+			bufs[n-1] = append(bufs[n-1], text...)
+			if extraSpace {
+				bufs[n-1] = append(bufs[n-1], ' ')
+			}
 			return
 		}
-		runs = append(runs, model.Run{Text: text, Style: sp.Style, Script: sp.Script, Math: sp.Math, Formula: sp.Formula})
+		b := make([]byte, 0, len(text)+16)
+		b = append(b, text...)
+		if extraSpace {
+			b = append(b, ' ')
+		}
+		runs = append(runs, model.Run{Style: sp.Style, Script: sp.Script, Math: sp.Math, Formula: sp.Formula})
+		bufs = append(bufs, b)
 	}
 	for i, l := range lines {
 		for j, s := range l.Spans {
 			t := s.Text
+			space := false
 			if j == len(l.Spans)-1 && i < len(lines)-1 {
 				t = strings.TrimRight(t, " ")
-				next := strings.TrimLeft(lines[i+1].Text(), " ")
-				nr, _ := utf8.DecodeRuneInString(next)
+				nr := firstRune(&lines[i+1])
 				switch {
 				case strings.HasSuffix(t, "\u00AD"):
 					t = strings.TrimSuffix(t, "\u00AD")
 				case strings.HasSuffix(t, "-") && unicode.IsLower(nr) && prevIsLower(t):
 					t = strings.TrimSuffix(t, "-")
-				case endsCJK(t) && startsCJK(next):
+				case endsCJK(t) && textnorm.IsCJK(nr):
 					// CJK text has no inter-word spaces: join lines directly.
 				default:
-					t += " "
+					space = true
 				}
 			}
 			if j == 0 && i > 0 {
 				t = strings.TrimLeft(t, " ")
 			}
-			add(t, s)
+			add(t, s, space)
 		}
+	}
+	for k := range runs {
+		runs[k].Text = string(bufs[k])
 	}
 	if n := len(runs); n > 0 {
 		runs[n-1].Text = strings.TrimRight(runs[n-1].Text, " ")
 	}
 	return runs
+}
+
+// firstRune returns the first non-space character of a line.
+func firstRune(l *model.Line) rune {
+	for _, sp := range l.Spans {
+		for _, r := range sp.Text {
+			if r != ' ' {
+				return r
+			}
+		}
+	}
+	return 0
 }
 
 func endsCJK(t string) bool {

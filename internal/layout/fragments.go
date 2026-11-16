@@ -30,11 +30,14 @@ type frag struct {
 	tb       [][]byte    // span text under construction (see finalize)
 	sbase    []float64   // baseline of each span's first glyph
 	gidx     []int32     // indices of the glyphs that make up the fragment
+	txt      string      // cached text() (reset when spans change)
+	txtOK    bool
 }
 
 // finalize converts the byte buffers into span strings (one allocation
 // per span instead of one per glyph).
 func (f *frag) finalize() {
+	f.txtOK = false
 	for i := range f.spans {
 		f.spans[i].Text = string(f.tb[i])
 		// Smaller text raised or lowered against the fragment baseline is a
@@ -53,6 +56,14 @@ func (f *frag) finalize() {
 }
 
 func (f *frag) text() string {
+	if f.txtOK {
+		return f.txt
+	}
+	f.txt, f.txtOK = f.buildText(), true
+	return f.txt
+}
+
+func (f *frag) buildText() string {
 	n := 0
 	for _, s := range f.spans {
 		n += len(s.Text)
@@ -98,8 +109,8 @@ func (f *frag) appendGlyph(text string, x0, x1 float64, st model.Style, bb model
 		sp.Edges = sp.Edges[:len(sp.Edges)-1] // replace trailing right edge
 		f.tb[k-1] = append(f.tb[k-1], text...)
 	} else {
-		f.spans = append(f.spans, model.Span{Style: st, BBox: bb, Invisible: invisible, Confidence: 1, Math: math, Edges: make([]float64, 0, 32)})
-		f.tb = append(f.tb, append(make([]byte, 0, 64), text...))
+		f.spans = append(f.spans, model.Span{Style: st, BBox: bb, Invisible: invisible, Confidence: 1, Math: math, Edges: make([]float64, 0, 12)})
+		f.tb = append(f.tb, append(make([]byte, 0, 24), text...))
 		f.sbase = append(f.sbase, base)
 		sp = &f.spans[len(f.spans)-1]
 	}
@@ -116,13 +127,17 @@ func (f *frag) appendGlyph(text string, x0, x1 float64, st model.Style, bb model
 func buildFragments(glyphs []content.Glyph, page model.Rect) []*frag {
 	var out []*frag
 	var cur *frag
-	// Ring of recent glyph positions for duplicate ("fake bold") suppression.
-	type key struct {
-		x, y int32 // compared first: cheap and almost always different
+	// Recent glyph positions for duplicate ("fake bold") suppression: a
+	// small open-addressing table keyed on the rounded origin. A glyph is
+	// a duplicate when the same text was drawn at the same spot within the
+	// last dupWindow glyphs.
+	const dupWindow, dupSlots = 512, 1024
+	type slot struct {
+		x, y int32
+		seq  int32 // glyph index + 1 (0 = empty)
 		t    string
 	}
-	var recent [64]key
-	nRecent := 0
+	recent := make([]slot, dupSlots)
 	for i := range glyphs {
 		g := &glyphs[i]
 		if g.Space {
@@ -140,19 +155,27 @@ func buildFragments(glyphs []content.Glyph, page model.Rect) []*frag {
 		if text == "" {
 			text = unmapped
 		}
-		k := key{int32(math.Round(g.Origin.X * 2)), int32(math.Round(g.Origin.Y * 2)), text}
-		dup := false
-		for j := 0; j < min(nRecent, len(recent)); j++ {
-			if r := &recent[j]; r.x == k.x && r.y == k.y && r.t == k.t {
+		kx, ky := int32(math.Round(g.Origin.X*2)), int32(math.Round(g.Origin.Y*2))
+		h := (uint32(kx)*73856093 ^ uint32(ky)*19349663) & (dupSlots - 1)
+		dup, free := false, -1
+		for p := uint32(0); p < 4; p++ {
+			sl := &recent[(h+p)&(dupSlots-1)]
+			live := sl.seq > 0 && i+1-int(sl.seq) < dupWindow
+			if live && sl.x == kx && sl.y == ky && sl.t == text {
 				dup = true
 				break
+			}
+			if !live && free < 0 {
+				free = int((h + p) & (dupSlots - 1))
 			}
 		}
 		if dup {
 			continue // same glyph drawn again at the same spot
 		}
-		recent[nRecent%len(recent)] = k
-		nRecent++
+		if free < 0 {
+			free = int(h) // all probed slots live: replace the first
+		}
+		recent[free] = slot{x: kx, y: ky, seq: int32(i + 1), t: text}
 		st := styleOf(g)
 		if !g.Horizontal() {
 			// Rotated/vertical text: continue the run only when the glyph
@@ -277,6 +300,7 @@ func (f *frag) splitAt(x float64) (*frag, *frag, bool) {
 
 // trimSpaces removes leading/trailing space runes created by splitting.
 func trimSpaces(f *frag) {
+	f.txtOK = false
 	for len(f.spans) > 0 {
 		s := &f.spans[0]
 		if len(s.Text) > 0 && s.Text[0] == ' ' {

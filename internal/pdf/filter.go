@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 )
 
 // MaxDecodedSize caps the output of a single stream decode to defend
@@ -140,15 +141,28 @@ func applyFilter(f Name, data []byte, parms Dict) ([]byte, error) {
 
 // inflate decodes zlib data, tolerating bad checksums, raw deflate and
 // truncated streams (returns what was recovered).
+// zlibPool reuses zlib/flate decompressors (each holds a 32 KiB window).
+var zlibPool sync.Pool
+
 func inflate(data []byte) ([]byte, error) {
-	zr, err := zlib.NewReader(bytes.NewReader(data))
-	if err != nil {
-		return inflateRaw(data)
+	br := bytes.NewReader(data)
+	var zr io.ReadCloser
+	if v := zlibPool.Get(); v != nil {
+		zr = v.(io.ReadCloser)
+		if err := zr.(zlib.Resetter).Reset(br, nil); err != nil {
+			zlibPool.Put(zr)
+			return inflateRaw(data)
+		}
+	} else {
+		var err error
+		if zr, err = zlib.NewReader(br); err != nil {
+			return inflateRaw(data)
+		}
 	}
-	defer zr.Close()
+	defer zlibPool.Put(zr)
 	var buf bytes.Buffer
-	buf.Grow(len(data) * 3)
-	_, err = io.Copy(&buf, io.LimitReader(zr, MaxDecodedSize))
+	buf.Grow(len(data) * 6) // content streams typically compress 4–8×
+	_, err := buf.ReadFrom(io.LimitReader(zr, MaxDecodedSize))
 	if err != nil && buf.Len() > 0 {
 		return buf.Bytes(), nil // checksum / truncation: keep recovered data
 	}
