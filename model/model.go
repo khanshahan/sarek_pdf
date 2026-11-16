@@ -275,6 +275,8 @@ type Table struct {
 	// HeaderRows is the number of leading rows of a continuation part that
 	// repeat the header of the first part (skipped by Merged).
 	HeaderRows int
+	// Page is the number of the page holding this part.
+	Page int
 }
 
 // Bounds implements Block.

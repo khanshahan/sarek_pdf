@@ -68,6 +68,8 @@ namespace SarekPdf
         [JsonPropertyName("tables")] public bool? Tables { get; set; }
         [JsonPropertyName("drawings")] public bool? Drawings { get; set; }
         [JsonPropertyName("images")] public bool? Images { get; set; }
+        /// <summary>Text-only mode: skip tables, drawings, images and formulas for speed. Default: full analysis.</summary>
+        [JsonPropertyName("text_only")] public bool TextOnly { get; set; }
         /// <summary>OCR fallback (native library built with -tags onnx).</summary>
         [JsonPropertyName("ocr")] public OcrOptions? Ocr { get; set; }
     }

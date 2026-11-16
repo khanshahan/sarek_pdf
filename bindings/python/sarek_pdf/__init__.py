@@ -85,7 +85,7 @@ class Document:
     def open(cls, path: str, *, password: str = "", workers: int = 0,
              tables: Optional[bool] = None, drawings: Optional[bool] = None,
              images: Optional[bool] = None, llm: Optional[Dict[str, Any]] = None,
-             ocr: Optional[Dict[str, Any]] = None) -> "Document":
+             ocr: Optional[Dict[str, Any]] = None, text_only: bool = False) -> "Document":
         """Open a file path, or an http(s) URL.
 
         ocr enables the OCR fallback, e.g. {"models": "/path/to/paddleocr-onnx",
@@ -96,7 +96,8 @@ class Document:
         and text() prefixes OCR pages with a notice line.
         """
         h, err = ctypes.c_uint64(), ctypes.c_void_p()
-        o = _opts(password=password, workers=workers, tables=tables, drawings=drawings, images=images, llm=llm, ocr=ocr)
+        o = _opts(password=password, workers=workers, tables=tables, drawings=drawings, images=images, llm=llm, ocr=ocr,
+                  text_only=text_only or None)
         fn = _lib.sarek_open_url if path.startswith(("http://", "https://")) else _lib.sarek_open_file
         if fn(path.encode(), o, ctypes.byref(h), ctypes.byref(err)) != 0:
             _raise(err)

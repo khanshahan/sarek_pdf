@@ -55,33 +55,58 @@ func DefaultOptions() Options {
 }
 
 type writer struct {
-	w      *bufio.Writer
-	o      Options
-	err    error
-	assets int
+	w       *bufio.Writer
+	o       Options
+	err     error
+	assets  int
+	written map[*model.Table]bool // table parts already written (merged)
+}
+
+// Writer writes Markdown page by page (for streaming with
+// sarekpdf.Document.Stream). Use Write for a whole document.
+type Writer struct{ x *writer }
+
+// NewWriter starts a Markdown document; meta supplies the title.
+func NewWriter(w io.Writer, meta model.Metadata, o Options) *Writer {
+	x := &writer{w: bufio.NewWriterSize(w, 1<<16), o: o, written: map[*model.Table]bool{}}
+	if t := strings.TrimSpace(meta.Title); t != "" {
+		x.printf("<!-- title: %s -->\n\n", strings.ReplaceAll(t, "--", "- -"))
+	}
+	return &Writer{x: x}
+}
+
+// WritePage appends one page.
+func (mw *Writer) WritePage(p *model.Page) error {
+	x := mw.x
+	if x.o.PageMarkers {
+		x.printf("<!-- page %d -->\n\n", p.Number)
+	}
+	if n := p.OCRNotice(); n != "" {
+		x.printf("> %s\n\n", escape(strings.Trim(n, "[]")))
+	}
+	for _, b := range p.Blocks {
+		x.block(p, b)
+	}
+	return x.err
+}
+
+// Close flushes the output.
+func (mw *Writer) Close() error {
+	if mw.x.err != nil {
+		return mw.x.err
+	}
+	return mw.x.w.Flush()
 }
 
 // Write writes doc as Markdown to w.
 func Write(w io.Writer, doc *model.Document, o Options) error {
-	x := &writer{w: bufio.NewWriterSize(w, 1<<16), o: o}
-	if t := strings.TrimSpace(doc.Metadata.Title); t != "" {
-		x.printf("<!-- title: %s -->\n\n", strings.ReplaceAll(t, "--", "- -"))
-	}
+	mw := NewWriter(w, doc.Metadata, o)
 	for _, p := range doc.Pages {
-		if o.PageMarkers {
-			x.printf("<!-- page %d -->\n\n", p.Number)
-		}
-		if n := p.OCRNotice(); n != "" {
-			x.printf("> %s\n\n", escape(strings.Trim(n, "[]")))
-		}
-		for _, b := range p.Blocks {
-			x.block(p, b)
+		if err := mw.WritePage(p); err != nil {
+			return err
 		}
 	}
-	if x.err != nil {
-		return x.err
-	}
-	return x.w.Flush()
+	return mw.Close()
 }
 
 func (x *writer) printf(format string, a ...any) {
@@ -98,9 +123,17 @@ func (x *writer) block(p *model.Page, b model.Block) {
 		}
 		x.paragraph(v)
 	case *model.Table:
-		if v.Prev == nil { // continuation parts are written with the first part
-			x.table(v.Merged())
+		// A table continued across pages is written once, merged, with its
+		// first part. A later part not covered then (possible when
+		// streaming beyond the lookahead window) is written on its own.
+		if x.written[v] {
+			return
 		}
+		m := v.Merged()
+		for part := v; part != nil && !x.written[part]; part = part.Next {
+			x.written[part] = true
+		}
+		x.table(m)
 	case *model.Image:
 		if !x.o.NoImages && !v.OCRSource {
 			x.image(p, v)

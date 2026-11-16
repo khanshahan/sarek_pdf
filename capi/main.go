@@ -19,7 +19,7 @@
 // must be released with sarek_free. Output buffers must also be released
 // with sarek_free.
 //
-// Open options (JSON): {"password","workers","tables","drawings","images",
+// Open options (JSON): {"password","workers","tables","drawings","images","text_only",
 // "llm": {"url","model","concurrency"},
 // "ocr": {"models": "<dir>", "lang": "english", "mode": "auto|always|never",
 //
@@ -88,6 +88,7 @@ type openOptions struct {
 	Tables   *bool  `json:"tables"`
 	Drawings *bool  `json:"drawings"`
 	Images   *bool  `json:"images"`
+	TextOnly bool   `json:"text_only"`
 	OCR      *struct {
 		Models string `json:"models"`
 		Lang   string `json:"lang"`
@@ -142,7 +143,7 @@ func formulaEngine(dir string) (*mathocr.Engine, error) {
 }
 
 func (o openOptions) toOptions() ([]sarekpdf.Option, error) {
-	opts := []sarekpdf.Option{sarekpdf.WithPassword(o.Password), sarekpdf.WithWorkers(o.Workers)}
+	opts := []sarekpdf.Option{sarekpdf.WithPassword(o.Password), sarekpdf.WithWorkers(o.Workers), sarekpdf.WithTextOnly(o.TextOnly)}
 	if o.Tables != nil {
 		opts = append(opts, sarekpdf.WithTables(*o.Tables))
 	}

@@ -14,6 +14,8 @@ import (
 type Options struct {
 	Tables   bool // detect tables
 	Drawings bool // group vector paths into drawings
+	// NoFormulas skips formula recognition (text-only mode).
+	NoFormulas bool
 	// OCR holds text lines recognised from page images. They are laid out
 	// together with text-layer text and marked as model.SourceOCR.
 	OCR []OCRLine
@@ -135,9 +137,11 @@ func Analyze(res *content.Result, images []*model.Image, opts Options) []model.B
 
 	// Display formulas (before drawings, so fraction bars stay with them).
 	blocks = append(blocks, opts.Blocks...)
-	formulas, inlineMath := detectFormulas(frags, res.Glyphs, res.Paths, usedPaths, page)
-	blocks = append(blocks, formulas...)
-	frags = append(frags, inlineMath...)
+	if !opts.NoFormulas {
+		formulas, inlineMath := detectFormulas(frags, res.Glyphs, res.Paths, usedPaths, page)
+		blocks = append(blocks, formulas...)
+		frags = append(frags, inlineMath...)
+	}
 
 	if opts.Drawings {
 		blocks = append(blocks, buildDrawings(res.Paths, usedPaths, frags, page)...)

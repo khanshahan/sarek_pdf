@@ -53,38 +53,58 @@ type Options struct {
 func DefaultOptions() Options { return Options{Geometry: true, Paths: true} }
 
 type writer struct {
-	w         *bufio.Writer
-	o         Options
-	err       error
-	tablePage map[*model.Table]int
+	w   *bufio.Writer
+	o   Options
+	err error
+}
+
+// Writer writes XML page by page (for streaming with
+// sarekpdf.Document.Stream). Use Write for a whole document.
+type Writer struct{ x *writer }
+
+// NewWriter starts the document element. pages is the number of pages
+// that will be written (0 when unknown).
+func NewWriter(w io.Writer, version string, meta model.Metadata, outline []model.OutlineItem, pages int, o Options) *Writer {
+	x := &writer{w: bufio.NewWriterSize(w, 1<<16), o: o}
+	x.raw(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
+	attrs := []string{"xmlns", "urn:sarek-pdf:1", "version", version}
+	if pages > 0 {
+		attrs = append(attrs, "pages", strconv.Itoa(pages))
+	}
+	x.open("document", attrs...)
+	x.metadata(meta)
+	if len(outline) > 0 {
+		x.open("outline")
+		x.outline(outline)
+		x.close("outline")
+	}
+	return &Writer{x: x}
+}
+
+// WritePage appends one page.
+func (xw *Writer) WritePage(p *model.Page) error {
+	xw.x.page(p)
+	return xw.x.err
+}
+
+// Close ends the document and flushes the output.
+func (xw *Writer) Close() error {
+	xw.x.close("document")
+	if xw.x.err != nil {
+		return xw.x.err
+	}
+	return xw.x.w.Flush()
 }
 
 // Write serialises doc to w.
 func Write(w io.Writer, doc *model.Document, o Options) error {
-	x := &writer{w: bufio.NewWriterSize(w, 1<<16), o: o, tablePage: map[*model.Table]int{}}
+	xw := NewWriter(w, doc.Version, doc.Metadata, doc.Outline, len(doc.Pages), o)
 	for _, p := range doc.Pages {
-		for _, b := range p.Blocks {
-			if t, ok := b.(*model.Table); ok {
-				x.tablePage[t] = p.Number
-			}
+		if err := xw.WritePage(p); err != nil {
+			return err
 		}
 	}
-	x.raw(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
-	x.open("document", "xmlns", "urn:sarek-pdf:1", "version", doc.Version, "pages", strconv.Itoa(len(doc.Pages)))
-	x.metadata(doc.Metadata)
-	if len(doc.Outline) > 0 {
-		x.open("outline")
-		x.outline(doc.Outline)
-		x.close("outline")
-	}
-	for _, p := range doc.Pages {
-		x.page(p)
-	}
-	x.close("document")
-	if x.err != nil {
-		return x.err
-	}
-	return x.w.Flush()
+	return xw.Close()
 }
 
 func (x *writer) raw(s string) {
@@ -288,13 +308,13 @@ func (x *writer) table(t *model.Table) {
 	attrs := []string{"rows", strconv.Itoa(t.NumRows()), "cols", strconv.Itoa(t.NumCols()),
 		"ruled", strconv.FormatBool(t.Ruled)}
 	if t.Prev != nil {
-		attrs = append(attrs, "continued-from-page", strconv.Itoa(x.tablePage[t.Prev]))
+		attrs = append(attrs, "continued-from-page", strconv.Itoa(t.Prev.Page))
 		if t.HeaderRows > 0 {
 			attrs = append(attrs, "repeated-header-rows", strconv.Itoa(t.HeaderRows))
 		}
 	}
 	if t.Next != nil {
-		attrs = append(attrs, "continues-on-page", strconv.Itoa(x.tablePage[t.Next]))
+		attrs = append(attrs, "continues-on-page", strconv.Itoa(t.Next.Page))
 	}
 	x.open("table", append(attrs, box(t.BBox)...)...)
 	x.raw("\n")

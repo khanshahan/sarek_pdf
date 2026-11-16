@@ -9,6 +9,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -71,6 +72,7 @@ func main() {
 	embed := fs.Bool("embed-images", false, "xml: embed image data as base64")
 	geometry := fs.Bool("geometry", true, "xml: include line/span coordinates")
 	timeout := fs.Duration("timeout", 0, "overall timeout (e.g. 2m)")
+	textOnly := fs.Bool("text-only", false, "text-only mode: skip tables, drawings, images and formulas for maximum speed (default: full analysis)")
 	cpuProfile := fs.String("cpuprofile", "", "write a CPU profile (development)")
 	memProfile := fs.String("memprofile", "", "write a heap profile at exit (development)")
 	ocrModels := fs.String("ocr-models", "", "OCR fallback: PaddleOCR ONNX model directory (binary built with -tags onnx)")
@@ -105,7 +107,8 @@ func main() {
 		ctx, cancel = context.WithTimeout(ctx, *timeout)
 		defer cancel()
 	}
-	opts := []sarekpdf.Option{sarekpdf.WithPassword(*password), sarekpdf.WithWorkers(*workers), sarekpdf.WithImages(*images)}
+	opts := []sarekpdf.Option{sarekpdf.WithPassword(*password), sarekpdf.WithWorkers(*workers), sarekpdf.WithImages(*images),
+		sarekpdf.WithTextOnly(*textOnly)}
 	if *llmURL != "" {
 		opts = append(opts, sarekpdf.WithCorrector(&llm.Corrector{Engine: openai.New(*llmURL, *llmModel), Concurrency: *llmConc}))
 	}
@@ -156,19 +159,20 @@ func main() {
 		enc.SetIndent("", "  ")
 		check(enc.Encode(info))
 	case "convert":
-		res, err := doc.Extract(ctx, sel...)
-		warn(err)
-		if res == nil {
-			os.Exit(1)
-		}
+		// Pages are streamed: memory stays bounded for large documents.
+		var write func(*model.Page) error
+		var finish func() error
 		switch *format {
 		case "docx":
 			if *out == "" {
 				die("convert -f docx requires -o")
 			}
-			check(docx.Write(w, res, docx.Options{}))
+			dw := docx.NewWriter(w, doc.Metadata(), docx.Options{})
+			write, finish = dw.WritePage, dw.Close
 		case "xml":
-			check(xmlexport.Write(w, res, xmlexport.Options{Geometry: *geometry, EmbedImages: *embed, Paths: true}))
+			xw := xmlexport.NewWriter(w, doc.Version(), doc.Metadata(), doc.Outline(), len(sel),
+				xmlexport.Options{Geometry: *geometry, EmbedImages: *embed, Paths: true})
+			write, finish = xw.WritePage, xw.Close
 		case "md", "markdown":
 			o := markdown.DefaultOptions()
 			if *out != "" && *images {
@@ -184,14 +188,37 @@ func main() {
 					return filepath.Base(dir) + "/" + name, nil
 				}
 			}
-			check(markdown.Write(w, res, o))
+			mw := markdown.NewWriter(w, doc.Metadata(), o)
+			write, finish = mw.WritePage, mw.Close
 		case "text":
-			_, err := io.WriteString(w, res.TextWithNotices()+"\n")
-			check(err)
+			bw := bufio.NewWriterSize(w, 1<<16)
+			first := true
+			write = func(p *model.Page) error {
+				if !first {
+					bw.WriteString("\n\f")
+				}
+				first = false
+				if n := p.OCRNotice(); n != "" {
+					bw.WriteString(n + "\n")
+				}
+				_, err := bw.WriteString(p.Text())
+				return err
+			}
+			finish = func() error {
+				bw.WriteString("\n")
+				return bw.Flush()
+			}
 		default:
 			die("unknown format " + *format)
 		}
-		fmt.Fprintf(os.Stderr, "%d pages in %v\n", len(res.Pages), time.Since(start).Round(time.Millisecond))
+		pages := 0
+		err := doc.Stream(ctx, sel, func(p *model.Page) error {
+			pages++
+			return write(p)
+		})
+		warn(err)
+		check(finish())
+		fmt.Fprintf(os.Stderr, "%d pages in %v\n", pages, time.Since(start).Round(time.Millisecond))
 	case "search", "highlight":
 		if *query == "" {
 			die(cmd + " requires -q")

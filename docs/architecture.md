@@ -188,6 +188,7 @@ classDiagram
         +Outline() []model.OutlineItem
         +Page(ctx, n int) (*model.Page, error)
         +Extract(ctx, pages ...int) (*model.Document, error)
+        +Stream(ctx, pages []int, fn func(*model.Page) error) error
         +Text(ctx, pages ...int) (string, error)
         +Paragraphs(ctx, pages ...int) ([]ParagraphRef, error)
         +Headings(ctx, pages ...int) ([]Heading, error)
@@ -217,6 +218,8 @@ classDiagram
         WithCIDToUnicode(collection, cmap)
         WithOCR(ocr.Engine, ocr.Mode)
         WithOCRMinConfidence(float64)
+        WithTextOnly(bool)
+        WithFormulaOCR(ocr.FormulaEngine)
         WithCorrector(correct.Corrector)
         WithCorrectTables(bool)
     }
@@ -573,6 +576,9 @@ flowchart LR
   through a `sync.Pool`.
 - OCR and language-model engines must be safe for concurrent use; the provided ones are.
 - All long operations take a `context.Context` and stop on cancellation.
+- `Document.Stream` delivers pages in order with bounded memory: a worker pool extracts
+  pages, a window of ±12 pages is kept for document-level analysis (running headers/footers,
+  tables continued across pages), and each page is released after delivery.
 
 ---
 

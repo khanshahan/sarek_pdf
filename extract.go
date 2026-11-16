@@ -51,15 +51,18 @@ func (d *Document) extractPage(ctx context.Context, n int) (pg *model.Page, err 
 	}()
 	p := d.pages[n-1]
 	gb := glyphPool.Get().(*[]content.Glyph)
+	full := !d.cfg.textOnly
 	in := content.NewInterpreter(d.r, d.fonts, d.forms, content.Options{
-		Images: d.cfg.images, Paths: d.cfg.tables || d.cfg.drawings,
+		// Text-only mode still decodes images when OCR may need them.
+		Images: d.cfg.images && (full || !isNilEngine(d.cfg.ocr) || d.cfg.formulaOCR != nil),
+		Paths:  full && (d.cfg.tables || d.cfg.drawings),
 	}, *gb)
 	res, ierr := in.RunPage(ctx, p)
 	if res == nil {
 		return nil, ierr
 	}
 	var imgs []*model.Image
-	if d.cfg.images {
+	if d.cfg.images && full {
 		for _, ip := range res.Images {
 			bb := ip.BBox
 			if bb.W() < 2 || bb.H() < 2 || bb.X1 < 0 || bb.Y1 < 0 || bb.X0 > res.Width || bb.Y0 > res.Height {
@@ -68,7 +71,7 @@ func (d *Document) extractPage(ctx context.Context, n int) (pg *model.Page, err 
 			imgs = append(imgs, images.Convert(d.r, ip.Stream, bb, d.cfg.imageData))
 		}
 	}
-	lopts := layout.Options{Tables: d.cfg.tables, Drawings: d.cfg.drawings}
+	lopts := layout.Options{Tables: full && d.cfg.tables, Drawings: full && d.cfg.drawings, NoFormulas: !full}
 	var ocrInfo *model.OCRInfo
 	if reason := d.needOCR(res); reason != "" {
 		var used map[*content.ImagePlacement]bool
@@ -96,6 +99,11 @@ func (d *Document) extractPage(ctx context.Context, n int) (pg *model.Page, err 
 		glyphPool.Put(gb)
 	}
 	page := &model.Page{Number: n, Width: res.Width, Height: res.Height, Blocks: blocks, OCR: ocrInfo}
+	for _, b := range blocks {
+		if t, ok := b.(*model.Table); ok {
+			t.Page = n
+		}
+	}
 	page.NoTextLayer = noTextLayer
 	if d.cfg.rules {
 		normalizePage(page)
@@ -248,64 +256,83 @@ feed:
 
 var digitsRe = regexp.MustCompile(`\d+`)
 
-// markHeadersFooters tags paragraphs repeated near the top or bottom of
-// most pages (page numbers, running titles). Text is never removed.
+// Running headers/footers: short paragraphs repeated near the top or
+// bottom of most pages (page numbers, running titles). Text is never
+// removed, only tagged.
+
+// marginKeys returns the normalised texts of a page's top and bottom
+// margin paragraphs (digits replaced, so "Page 3" matches "Page 4").
+func marginKeys(pg *model.Page) (top, bottom map[string]bool) {
+	top, bottom = map[string]bool{}, map[string]bool{}
+	for _, b := range pg.Blocks {
+		p, ok := b.(*model.Paragraph)
+		if !ok || len(p.Lines) > 2 {
+			continue
+		}
+		switch marginZone(pg, p) {
+		case -1:
+			top[marginKey(p)] = true
+		case 1:
+			bottom[marginKey(p)] = true
+		}
+	}
+	return
+}
+
+func marginKey(p *model.Paragraph) string {
+	return digitsRe.ReplaceAllString(strings.TrimSpace(p.Text()), "#")
+}
+
+func marginZone(pg *model.Page, p *model.Paragraph) int {
+	switch {
+	case p.BBox.Y1 < 0.1*pg.Height:
+		return -1
+	case p.BBox.Y0 > 0.9*pg.Height:
+		return 1
+	}
+	return 0
+}
+
+// applyHeadersFooters tags a page's margin paragraphs whose text occurs
+// on at least need of the counted pages.
+func applyHeadersFooters(pg *model.Page, top, bottom map[string]int, need int) {
+	for _, b := range pg.Blocks {
+		p, ok := b.(*model.Paragraph)
+		if !ok || len(p.Lines) > 2 {
+			continue
+		}
+		switch marginZone(pg, p) {
+		case -1:
+			if top[marginKey(p)] >= need {
+				p.Role, p.Level = model.RolePageHeader, 0
+			}
+		case 1:
+			if bottom[marginKey(p)] >= need {
+				p.Role, p.Level = model.RolePageFooter, 0
+			}
+		}
+	}
+}
+
+// markHeadersFooters tags running headers/footers using the whole set
+// of pages.
 func markHeadersFooters(pages []*model.Page) {
 	if len(pages) < 3 {
 		return
 	}
-	key := func(p *model.Paragraph) string { return digitsRe.ReplaceAllString(strings.TrimSpace(p.Text()), "#") }
 	top, bottom := map[string]int{}, map[string]int{}
-	zone := func(pg *model.Page, p *model.Paragraph) int {
-		switch {
-		case p.BBox.Y1 < 0.1*pg.Height:
-			return -1
-		case p.BBox.Y0 > 0.9*pg.Height:
-			return 1
-		}
-		return 0
-	}
 	for _, pg := range pages {
-		seenT, seenB := map[string]bool{}, map[string]bool{}
-		for _, b := range pg.Blocks {
-			p, ok := b.(*model.Paragraph)
-			if !ok || len(p.Lines) > 2 {
-				continue
-			}
-			k := key(p)
-			switch zone(pg, p) {
-			case -1:
-				if !seenT[k] {
-					top[k]++
-					seenT[k] = true
-				}
-			case 1:
-				if !seenB[k] {
-					bottom[k]++
-					seenB[k] = true
-				}
-			}
+		t, b := marginKeys(pg)
+		for k := range t {
+			top[k]++
+		}
+		for k := range b {
+			bottom[k]++
 		}
 	}
 	need := max(3, len(pages)/2)
 	for _, pg := range pages {
-		for _, b := range pg.Blocks {
-			p, ok := b.(*model.Paragraph)
-			if !ok || len(p.Lines) > 2 {
-				continue
-			}
-			k := key(p)
-			switch zone(pg, p) {
-			case -1:
-				if top[k] >= need {
-					p.Role, p.Level = model.RolePageHeader, 0
-				}
-			case 1:
-				if bottom[k] >= need {
-					p.Role, p.Level = model.RolePageFooter, 0
-				}
-			}
-		}
+		applyHeadersFooters(pg, top, bottom, need)
 	}
 }
 

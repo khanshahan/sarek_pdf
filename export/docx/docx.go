@@ -56,6 +56,7 @@ type comment struct {
 
 type writer struct {
 	o        Options
+	written  map[*model.Table]bool
 	comments []comment
 	// pending is the OCR notice to attach to the next OCR paragraph.
 	pending string
@@ -65,53 +66,101 @@ type writer struct {
 	maxW    float64 // max content width in points
 }
 
-// Write writes doc as DOCX to w.
-func Write(w io.Writer, doc *model.Document, o Options) error {
-	x := &writer{o: o, nextID: 1}
-	pw, ph := 612.0, 792.0
-	if len(doc.Pages) > 0 && doc.Pages[0].Width > 0 {
-		pw, ph = doc.Pages[0].Width, doc.Pages[0].Height
-	}
-	margin := pageMargins(doc)
-	x.maxW = pw - margin[1] - margin[3]
+const docHeader = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><w:body>`
 
-	x.sb.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><w:body>`)
-	for i, p := range doc.Pages {
-		if i > 0 && !o.NoPageBreaks {
-			x.sb.WriteString(`<w:p><w:r><w:br w:type="page"/></w:r></w:p>`)
+// Writer writes a DOCX page by page (for streaming with
+// sarekpdf.Document.Stream): word/document.xml is streamed into the zip
+// archive; images are kept until Close. Use Write for a whole document.
+type Writer struct {
+	x      *writer
+	zw     *zip.Writer
+	body   io.Writer
+	meta   model.Metadata
+	pages  int
+	pw, ph float64
+	margin [4]float64
+	err    error
+}
+
+// NewWriter starts a DOCX document.
+func NewWriter(w io.Writer, meta model.Metadata, o Options) *Writer {
+	dw := &Writer{x: &writer{o: o, nextID: 1, written: map[*model.Table]bool{}}, zw: zip.NewWriter(w), meta: meta,
+		pw: 612, ph: 792, margin: [4]float64{72, 72, 72, 72}}
+	dw.body, dw.err = dw.zw.Create("word/document.xml")
+	if dw.err == nil {
+		_, dw.err = io.WriteString(dw.body, docHeader)
+	}
+	return dw
+}
+
+func (dw *Writer) flush() {
+	if dw.err == nil && dw.x.sb.Len() > 0 {
+		_, dw.err = io.WriteString(dw.body, dw.x.sb.String())
+	}
+	dw.x.sb.Reset()
+}
+
+// WritePage appends one page (pages are separated by page breaks).
+func (dw *Writer) WritePage(p *model.Page) error {
+	if dw.err != nil {
+		return dw.err
+	}
+	if dw.pages == 0 {
+		if p.Width > 0 {
+			dw.pw, dw.ph = p.Width, p.Height
 		}
-		x.pending = p.OCRNotice()
-		for _, b := range p.Blocks {
-			x.block(b)
-		}
+		dw.margin = pageMargins(p)
+		dw.x.maxW = dw.pw - dw.margin[1] - dw.margin[3]
+	} else if !dw.x.o.NoPageBreaks {
+		dw.x.sb.WriteString(`<w:p><w:r><w:br w:type="page"/></w:r></w:p>`)
+	}
+	dw.pages++
+	dw.x.pending = p.OCRNotice()
+	for _, b := range p.Blocks {
+		dw.x.block(b)
+	}
+	dw.flush()
+	return dw.err
+}
+
+// Close completes the document and the archive.
+func (dw *Writer) Close() error {
+	if dw.err != nil {
+		return dw.err
+	}
+	if dw.pages == 0 {
+		dw.x.maxW = dw.pw - dw.margin[1] - dw.margin[3]
 	}
 	orient := ""
-	if pw > ph {
+	if dw.pw > dw.ph {
 		orient = ` w:orient="landscape"`
 	}
-	fmt.Fprintf(&x.sb, `<w:sectPr><w:pgSz w:w="%d" w:h="%d"%s/><w:pgMar w:top="%d" w:right="%d" w:bottom="%d" w:left="%d" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr></w:body></w:document>`,
-		tw(pw), tw(ph), orient, tw(margin[0]), tw(margin[1]), tw(margin[2]), tw(margin[3]))
-
-	zw := zip.NewWriter(w)
+	m := dw.margin
+	fmt.Fprintf(&dw.x.sb, `<w:sectPr><w:pgSz w:w="%d" w:h="%d"%s/><w:pgMar w:top="%d" w:right="%d" w:bottom="%d" w:left="%d" w:header="360" w:footer="360" w:gutter="0"/></w:sectPr></w:body></w:document>`,
+		tw(dw.pw), tw(dw.ph), orient, tw(m[0]), tw(m[1]), tw(m[2]), tw(m[3]))
+	dw.flush()
+	if dw.err != nil {
+		return dw.err
+	}
+	x := dw.x
+	ct := contentTypes
 	files := []struct{ name, body string }{
-		{"[Content_Types].xml", contentTypes},
+		{"[Content_Types].xml", ""},
 		{"_rels/.rels", rootRels},
-		{"docProps/core.xml", coreXML(doc.Metadata)},
+		{"docProps/core.xml", coreXML(dw.meta)},
 		{"docProps/app.xml", appXML},
 		{"word/styles.xml", stylesXML},
 		{"word/settings.xml", settingsXML},
 		{"word/_rels/document.xml.rels", x.docRels()},
-		{"word/document.xml", x.sb.String()},
 	}
-	ct := contentTypes
 	if len(x.comments) > 0 {
 		files = append(files, struct{ name, body string }{"word/comments.xml", x.commentsXML()})
 		ct = strings.Replace(ct, "</Types>", `<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/></Types>`, 1)
 	}
 	files[0].body = ct
 	for _, f := range files {
-		fw, err := zw.Create(f.name)
+		fw, err := dw.zw.Create(f.name)
 		if err != nil {
 			return err
 		}
@@ -119,26 +168,33 @@ func Write(w io.Writer, doc *model.Document, o Options) error {
 			return err
 		}
 	}
-	for _, m := range x.media {
+	for _, md := range x.media {
 		// Media is already compressed: store without deflate.
-		fw, err := zw.CreateHeader(&zip.FileHeader{Name: "word/media/" + m.name, Method: zip.Store})
+		fw, err := dw.zw.CreateHeader(&zip.FileHeader{Name: "word/media/" + md.name, Method: zip.Store})
 		if err != nil {
 			return err
 		}
-		if _, err := fw.Write(m.data); err != nil {
+		if _, err := fw.Write(md.data); err != nil {
 			return err
 		}
 	}
-	return zw.Close()
+	return dw.zw.Close()
 }
 
-// pageMargins estimates [top right bottom left] margins from content.
-func pageMargins(doc *model.Document) [4]float64 {
-	m := [4]float64{72, 72, 72, 72}
-	if len(doc.Pages) == 0 {
-		return m
+// Write writes doc as DOCX to w.
+func Write(w io.Writer, doc *model.Document, o Options) error {
+	dw := NewWriter(w, doc.Metadata, o)
+	for _, p := range doc.Pages {
+		if err := dw.WritePage(p); err != nil {
+			return err
+		}
 	}
-	p := doc.Pages[0]
+	return dw.Close()
+}
+
+// pageMargins estimates [top right bottom left] margins from a page's content.
+func pageMargins(p *model.Page) [4]float64 {
+	m := [4]float64{72, 72, 72, 72}
 	var bb model.Rect
 	for _, b := range p.Blocks {
 		bb = bb.Union(b.Bounds())
@@ -183,11 +239,17 @@ func (x *writer) block(b model.Block) {
 		}
 		x.paragraph(v)
 	case *model.Table:
-		// A table continued from the previous page was already written,
-		// merged, with its first part.
-		if v.Prev == nil {
-			x.table(v.Merged())
+		// A table continued across pages is written once, merged, with its
+		// first part; a later part not covered then (streaming beyond the
+		// lookahead window) is written on its own.
+		if x.written[v] {
+			return
 		}
+		mt := v.Merged()
+		for part := v; part != nil && !x.written[part]; part = part.Next {
+			x.written[part] = true
+		}
+		x.table(mt)
 	case *model.Image:
 		if !x.o.NoImages && (!v.OCRSource || x.o.KeepOCRImages) {
 			x.image(v)

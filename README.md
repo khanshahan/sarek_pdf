@@ -164,15 +164,31 @@ File.WriteAllBytes("report.docx", doc.ToDocx());
 
 ## Quality and speed
 
-Measured on this repository's test corpus (Apple M-series, 14 cores):
+Measured against MuPDF 1.28.6 (`mutool draw -F txt`, used only as a local benchmark) on an
+Apple M-series machine; word recall/precision against Apple PDFKit:
 
-| Metric | Result |
-|---|---|
-| Word recall / precision vs. Apple PDFKit, 72 Latin-script documents | 99.2 % / 99.8 % |
-| Robustness: 1,794 real-world PDFs | 0 failures |
-| Throughput, 200-page synthetic document | 2,460 pages/s (1 core), 13,600 pages/s (14 cores) |
-| Reading order, 2- and 3-column layouts (spanning titles, aligned baselines, unequal widths) | all test layouts correct |
-| OCR, 200 dpi 3-column scan (PaddleOCR v5, CPU) | 100 % word recall, 99.2 % mean confidence, ~1.4 s/page |
+| Workload | MuPDF | sarek_pdf full analysis, 1 core | text-only, 1 core | full, all cores |
+|---|---|---|---|---|
+| 72 Latin-script documents | 1.67 s · 99.5 % / 99.3 % | 1.73 s · 99.2 % / 99.8 % | 1.39 s | 0.77 s |
+| 1,000-page document | 0.31 s · 8 MB | 0.28 s · 28 MB | 0.27 s | 0.06 s |
+| 1,794 real-world PDFs (robustness) | 12.6 s · 0 failures | 11.2 s · 0 failures | 10.2 s | — |
+
+Where the texts differ from PDFKit, sarek_pdf is often the one that is right: it recovers
+ligatures missing from Word PDFs (e.g. "Fictional" instead of "Fic onal"), removes glyphs drawn
+twice (CAD labels, fake bold) and keeps right-to-left text in reading order. MuPDF is ahead on
+Japanese/Korean fonts without Unicode maps (see limitations) and on CAD-heavy pages under full
+analysis. Formulas, tables and document structure are only produced by sarek_pdf.
+
+### Modes
+
+* **Full analysis (default)**: tables, drawings, images, formulas, headings, columns.
+* **Text only** (`WithTextOnly(true)`, CLI `-text-only`, Python `text_only=True`): skips vector
+  graphics, images, tables, drawings and formulas for maximum speed; reading order, paragraphs,
+  headings, right-to-left text and running headers/footers are kept, and no text is lost.
+* **Streaming** (`Document.Stream`, used by the CLI): pages are extracted in parallel and handed
+  over in order while only a window of pages is kept in memory; running headers/footers and tables
+  continued across pages are still recognised within the window. The exporters have page-by-page
+  writers (`markdown.NewWriter`, `xmlexport.NewWriter`, `docx.NewWriter`).
 
 ## Formulas
 

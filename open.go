@@ -60,6 +60,7 @@ type config struct {
 	ocrMinConf    float64
 	formulaOCR    ocr.FormulaEngine
 	formulaMin    float64
+	textOnly      bool
 }
 
 func defaults() config {
@@ -113,6 +114,15 @@ func WithFormulaMinConfidence(v float64) Option { return func(c *config) { c.for
 // WithOCRMinConfidence drops OCR lines whose confidence is below v
 // (default 0.5). Dropped lines are counted in Page.OCR.Errors.
 func WithOCRMinConfidence(v float64) Option { return func(c *config) { c.ocrMinConf = v } }
+
+// WithTextOnly selects the text-only mode for maximum speed. The default
+// is full analysis (tables, drawings, images, formulas). In text-only
+// mode vector graphics and images are not processed and tables,
+// drawings and formulas are not recognised; reading order (columns),
+// paragraphs, headings, lists, right-to-left text and running headers/
+// footers are still produced, and the extracted text is the same text
+// (table cells and formulas then appear as plain text).
+func WithTextOnly(on bool) Option { return func(c *config) { c.textOnly = on } }
 
 // WithTables enables/disables table detection (default on).
 func WithTables(on bool) Option { return func(c *config) { c.tables = on } }
