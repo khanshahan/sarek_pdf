@@ -68,6 +68,7 @@ func buildLines(frags []*frag) []model.Line {
 				if gap > 0.1*g.size && !endsWithSpace(ln) {
 					st := f.spans[0].Style
 					ln.Spans = append(ln.Spans, model.Span{Text: " ", Style: st,
+						Source: f.spans[0].Source, Confidence: f.spans[0].Confidence,
 						BBox:  model.Rect{X0: prev.bbox.X1, Y0: f.bbox.Y0, X1: f.bbox.X0, Y1: f.bbox.Y1},
 						Edges: []float64{prev.bbox.X1, f.bbox.X0}})
 				}
@@ -100,7 +101,7 @@ func mergeSpans(sp []model.Span) []model.Span {
 	out := sp[:1]
 	for _, s := range sp[1:] {
 		last := &out[len(out)-1]
-		if sameStyle(last.Style, s.Style) && last.Invisible == s.Invisible {
+		if sameStyle(last.Style, s.Style) && last.Invisible == s.Invisible && last.Source == s.Source && last.Confidence == s.Confidence {
 			last.Text += s.Text
 			last.Edges = append(last.Edges[:len(last.Edges)-1], s.Edges...)
 			last.BBox = last.BBox.Union(s.BBox)

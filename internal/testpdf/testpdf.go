@@ -11,12 +11,28 @@ import (
 // Builder assembles a PDF with standard fonts.
 type Builder struct {
 	pages    []string
+	images   map[int]Image // page index -> /Im1 image XObject
 	Compress bool
 	Title    string
 }
 
 // AddPage adds a page with the given content stream (612×792).
 func (b *Builder) AddPage(content string) { b.pages = append(b.pages, content) }
+
+// Image is an 8-bit DeviceGray image.
+type Image struct {
+	W, H int
+	Gray []byte
+}
+
+// AddImagePage adds a page whose resources contain the image as /Im1.
+func (b *Builder) AddImagePage(content string, img Image) {
+	if b.images == nil {
+		b.images = map[int]Image{}
+	}
+	b.images[len(b.pages)] = img
+	b.pages = append(b.pages, content)
+}
 
 // Bytes renders the PDF.
 func (b *Builder) Bytes() []byte {
@@ -37,7 +53,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end`
 	f4 := add(fmt.Sprintf("<< /Type /Font /Subtype /Type1 /BaseFont /Custom /FirstChar 1 /LastChar 3 /Widths [600 600 600] /Encoding << /Differences [1 /g1 /g2 /g3] >> /ToUnicode %d 0 R >>", tu))
 	res := fmt.Sprintf("<< /Font << /F1 %d 0 R /F2 %d 0 R /F3 %d 0 R /F4 %d 0 R >> >>", f1, f2, f3, f4)
 	var kids []string
-	for _, c := range b.pages {
+	for pi, c := range b.pages {
 		var cs string
 		if b.Compress {
 			var z bytes.Buffer
@@ -49,7 +65,16 @@ endcmap CMapName currentdict /CMap defineresource pop end end`
 			cs = fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(c), c)
 		}
 		cn := add(cs)
-		pn := add(fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources %s /Contents %d 0 R >>", res, cn))
+		pres := res
+		if img, ok := b.images[pi]; ok {
+			var z bytes.Buffer
+			zw := zlib.NewWriter(&z)
+			zw.Write(img.Gray)
+			zw.Close()
+			in := add(fmt.Sprintf("<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /Length %d >>\nstream\n%s\nendstream", img.W, img.H, z.Len(), z.String()))
+			pres = strings.TrimSuffix(res, " >>") + fmt.Sprintf(" /XObject << /Im1 %d 0 R >> >>", in)
+		}
+		pn := add(fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources %s /Contents %d 0 R >>", pres, cn))
 		kids = append(kids, fmt.Sprintf("%d 0 R", pn))
 	}
 	objs[0] = "<< /Type /Catalog /Pages 2 0 R >>"

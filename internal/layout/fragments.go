@@ -76,7 +76,7 @@ func (f *frag) appendText(text string, x0, x1 float64, st model.Style, bb model.
 		sp.Edges = sp.Edges[:len(sp.Edges)-1] // replace trailing right edge
 		f.tb[k-1] = append(f.tb[k-1], text...)
 	} else {
-		f.spans = append(f.spans, model.Span{Style: st, BBox: bb, Invisible: invisible, Edges: make([]float64, 0, 32)})
+		f.spans = append(f.spans, model.Span{Style: st, BBox: bb, Invisible: invisible, Confidence: 1, Edges: make([]float64, 0, 32)})
 		f.tb = append(f.tb, append(make([]byte, 0, 64), text...))
 		sp = &f.spans[len(f.spans)-1]
 	}

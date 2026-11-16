@@ -27,12 +27,16 @@ type Match struct {
 	Page  int
 	Text  string       // matched text as it appears in the PDF
 	Rects []model.Rect // one rectangle per line the match touches
+	// Source is model.SourceOCR when any matched character was produced
+	// by OCR rather than read from the PDF text layer.
+	Source model.Source
 }
 
 // pos locates one searchable rune on a page.
 type pos struct {
 	line   *model.Line
 	x0, x1 float64
+	ocr    bool
 }
 
 // pageIndex is the searchable text of one page with rune geometry.
@@ -66,7 +70,7 @@ func buildIndex(pg *model.Page) *pageIndex {
 					w := (x1 - x0) / float64(len(exp))
 					for k, er := range exp {
 						idx.text = append(idx.text, er)
-						idx.pos = append(idx.pos, pos{line: l, x0: x0 + w*float64(k), x1: x0 + w*float64(k+1)})
+						idx.pos = append(idx.pos, pos{line: l, x0: x0 + w*float64(k), x1: x0 + w*float64(k+1), ocr: sp.Source == model.SourceOCR})
 					}
 					continue
 				}
@@ -74,7 +78,7 @@ func buildIndex(pg *model.Page) *pageIndex {
 					r = ' '
 				}
 				idx.text = append(idx.text, r)
-				idx.pos = append(idx.pos, pos{line: l, x0: x0, x1: x1})
+				idx.pos = append(idx.pos, pos{line: l, x0: x0, x1: x1, ocr: sp.Source == model.SourceOCR})
 			}
 		}
 	}
@@ -207,6 +211,9 @@ func searchPage(pg *model.Page, re *regexp.Regexp) []Match {
 			p := idx.pos[k]
 			if p.line == nil {
 				continue
+			}
+			if p.ocr {
+				m.Source = model.SourceOCR
 			}
 			if p.line != cur {
 				if cur != nil {

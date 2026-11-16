@@ -4,8 +4,11 @@ package images
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 
 	"github.com/khanshahan/sarek_pdf/internal/pdf"
@@ -40,7 +43,11 @@ func Convert(r *pdf.Reader, s *pdf.Stream, bbox model.Rect, decode bool) *model.
 		img.Format, img.Data = "jbig2", res.Data
 		return img
 	case "CCITTFaxDecode":
-		img.Format, img.Data = "ccitt", res.Data
+		if g := ccittImage(r, d, res.Data, res.RemainingParms, w, h); g != nil {
+			img.Format, img.Data = "png", encodePNG(g)
+		} else {
+			img.Format, img.Data = "ccitt", res.Data
+		}
 		return img
 	}
 	if data := toPNG(r, d, res.Data, w, h); data != nil {
@@ -127,6 +134,24 @@ func cmykToRGB(c, m, y, k byte) (byte, byte, byte) {
 }
 
 func toPNG(r *pdf.Reader, d pdf.Dict, data []byte, w, h int) []byte {
+	img := rawImage(r, d, data, w, h)
+	if img == nil {
+		return nil
+	}
+	return encodePNG(img)
+}
+
+func encodePNG(img image.Image) []byte {
+	var buf bytes.Buffer
+	enc := png.Encoder{CompressionLevel: png.BestSpeed}
+	if err := enc.Encode(&buf, img); err != nil {
+		return nil
+	}
+	return buf.Bytes()
+}
+
+// rawImage converts decoded image samples into an image.Image.
+func rawImage(r *pdf.Reader, d pdf.Dict, data []byte, w, h int) image.Image {
 	bpc := r.Int(d["BitsPerComponent"], 8)
 	mask, _ := r.Resolve(d["ImageMask"]).(pdf.Boolean)
 	cs := colorSpace{n: 1}
@@ -219,10 +244,64 @@ func toPNG(r *pdf.Reader, d pdf.Dict, data []byte, w, h int) []byte {
 	default:
 		return nil
 	}
-	var buf bytes.Buffer
-	enc := png.Encoder{CompressionLevel: png.BestSpeed}
-	if err := enc.Encode(&buf, out); err != nil {
+	return out
+}
+
+// ErrUndecodable is returned for image codecs sarek_pdf cannot rasterise
+// (JPEG 2000, JBIG2).
+var ErrUndecodable = errors.New("images: unsupported image codec")
+
+// Decode rasterises an image XObject (or inline image) for OCR.
+func Decode(r *pdf.Reader, s *pdf.Stream) (image.Image, error) {
+	d := s.Dict
+	w, h := r.Int(d["Width"], 0), r.Int(d["Height"], 0)
+	if w <= 0 || h <= 0 || w*h > MaxPixels {
+		return nil, fmt.Errorf("images: invalid size %dx%d", w, h)
+	}
+	res, err := r.DecodeStream(s)
+	if err != nil && len(res.Data) == 0 {
+		return nil, err
+	}
+	switch res.Remaining {
+	case "":
+		if img := rawImage(r, d, res.Data, w, h); img != nil {
+			return img, nil
+		}
+		return nil, errors.New("images: unsupported colour space or depth")
+	case "DCTDecode":
+		return jpeg.Decode(bytes.NewReader(res.Data))
+	case "CCITTFaxDecode":
+		if img := ccittImage(r, d, res.Data, res.RemainingParms, w, h); img != nil {
+			return img, nil
+		}
+		return nil, errCCITT
+	}
+	return nil, fmt.Errorf("%w: %s", ErrUndecodable, res.Remaining)
+}
+
+func ccittImage(r *pdf.Reader, d pdf.Dict, data []byte, parms pdf.Dict, w, h int) *image.Gray {
+	p := ccittParams{K: r.Int(parms["K"], 0), Columns: r.Int(parms["Columns"], w), Rows: r.Int(parms["Rows"], h),
+		EndOfBlock: true}
+	if b, ok := r.Resolve(parms["BlackIs1"]).(pdf.Boolean); ok {
+		p.BlackIs1 = bool(b)
+	}
+	if b, ok := r.Resolve(parms["EncodedByteAlign"]).(pdf.Boolean); ok {
+		p.ByteAlign = bool(b)
+	}
+	if b, ok := r.Resolve(parms["EndOfBlock"]).(pdf.Boolean); ok {
+		p.EndOfBlock = bool(b)
+	}
+	pix, rows, err := decodeCCITT(data, p)
+	if rows == 0 || (err != nil && rows < h/2) {
 		return nil
 	}
-	return buf.Bytes()
+	g := image.NewGray(image.Rect(0, 0, p.Columns, rows))
+	copy(g.Pix, pix)
+	// /Decode [1 0] inverts.
+	if dec := r.Numbers(d["Decode"]); len(dec) >= 2 && dec[0] > dec[1] {
+		for i := range g.Pix {
+			g.Pix[i] = 255 - g.Pix[i]
+		}
+	}
+	return g
 }

@@ -8,7 +8,12 @@ else
 LIB := build/libsarekpdf.so
 endif
 
-.PHONY: all test fuzz bench lib cli clean
+# ONNX Runtime (MIT) for the optional OCR engine: set ORT_DIR to an
+# extracted onnxruntime release (with include/ and lib/).
+ORT_DIR ?=
+ORT_ENV = CGO_CFLAGS="-I$(ORT_DIR)/include" CGO_LDFLAGS="-L$(ORT_DIR)/lib -Wl,-rpath,$(ORT_DIR)/lib"
+
+.PHONY: all test fuzz bench lib cli lib-ocr cli-ocr test-ocr clean
 
 all: test lib cli
 
@@ -27,6 +32,16 @@ lib:
 
 cli:
 	$(GO) build -trimpath -o build/sarekpdf ./cmd/sarekpdf
+
+lib-ocr:
+	$(ORT_ENV) $(GO) build -tags onnx -trimpath -buildmode=c-shared -o $(LIB) ./capi
+
+cli-ocr:
+	$(ORT_ENV) $(GO) build -tags onnx -trimpath -o build/sarekpdf ./cmd/sarekpdf
+
+# Needs SAREK_OCR_MODELS and SAREK_SCAN (see ocr_onnx_test.go).
+test-ocr:
+	$(ORT_ENV) $(GO) test -tags onnx -run OCR -v .
 
 clean:
 	rm -rf build

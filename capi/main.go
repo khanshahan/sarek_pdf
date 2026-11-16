@@ -19,13 +19,18 @@
 // must be released with sarek_free. Output buffers must also be released
 // with sarek_free.
 //
+// Open options (JSON): {"password","workers","tables","drawings","images",
+// "llm": {"url","model","concurrency"},
+// "ocr": {"models": "<dir>", "lang": "english", "mode": "auto|always|never"}}
+// OCR requires a library built with -tags onnx.
+//
 // Operations for sarek_call (args are JSON objects):
 //
 //	info        {}                                  → JSON
 //	text        {"pages"}                           → UTF-8 text
 //	xml         {"pages","geometry","embed_images"} → XML
 //	docx        {"pages"}                           → DOCX bytes
-//	paragraphs  {"pages"}                           → JSON
+//	paragraphs  {"pages"}                           → JSON (with "source": "text-layer"|"ocr", "confidence")
 //	headings    {"pages"}                           → JSON
 //	search      {"query","regex","case_sensitive","whole_word","pages","max_results"} → JSON
 //	highlight   {"query",… as search, "color":"FFEB3B"} → PDF bytes
@@ -57,6 +62,8 @@ import (
 	"github.com/khanshahan/sarek_pdf/export/docx"
 	"github.com/khanshahan/sarek_pdf/export/xmlexport"
 	"github.com/khanshahan/sarek_pdf/model"
+	"github.com/khanshahan/sarek_pdf/ocr"
+	"github.com/khanshahan/sarek_pdf/ocr/paddle"
 )
 
 // Version is the library version reported by sarek_version.
@@ -74,14 +81,41 @@ type openOptions struct {
 	Tables   *bool  `json:"tables"`
 	Drawings *bool  `json:"drawings"`
 	Images   *bool  `json:"images"`
-	LLM      *struct {
+	OCR      *struct {
+		Models string `json:"models"`
+		Lang   string `json:"lang"`
+		Mode   string `json:"mode"`
+	} `json:"ocr"`
+	LLM *struct {
 		URL         string `json:"url"`
 		Model       string `json:"model"`
 		Concurrency int    `json:"concurrency"`
 	} `json:"llm"`
 }
 
-func (o openOptions) toOptions() []sarekpdf.Option {
+// ocrEngines caches loaded OCR engines per model directory and language;
+// engines are safe for concurrent use and expensive to load.
+var (
+	ocrMu      sync.Mutex
+	ocrEngines = map[string]*paddle.Engine{}
+)
+
+func ocrEngine(dir, lang string) (*paddle.Engine, error) {
+	ocrMu.Lock()
+	defer ocrMu.Unlock()
+	key := dir + "\x00" + lang
+	if e := ocrEngines[key]; e != nil {
+		return e, nil
+	}
+	e, err := paddle.New(paddle.FromDir(dir, lang))
+	if err != nil {
+		return nil, err
+	}
+	ocrEngines[key] = e
+	return e, nil
+}
+
+func (o openOptions) toOptions() ([]sarekpdf.Option, error) {
 	opts := []sarekpdf.Option{sarekpdf.WithPassword(o.Password), sarekpdf.WithWorkers(o.Workers)}
 	if o.Tables != nil {
 		opts = append(opts, sarekpdf.WithTables(*o.Tables))
@@ -96,7 +130,15 @@ func (o openOptions) toOptions() []sarekpdf.Option {
 		opts = append(opts, sarekpdf.WithCorrector(&llm.Corrector{
 			Engine: openai.New(o.LLM.URL, o.LLM.Model), Concurrency: max(1, o.LLM.Concurrency)}))
 	}
-	return opts
+	if o.OCR != nil && o.OCR.Models != "" {
+		eng, err := ocrEngine(o.OCR.Models, o.OCR.Lang)
+		if err != nil {
+			return nil, err
+		}
+		mode := map[string]ocr.Mode{"": ocr.Auto, "auto": ocr.Auto, "always": ocr.Always, "never": ocr.Never}[o.OCR.Mode]
+		opts = append(opts, sarekpdf.WithOCR(eng, mode))
+	}
+	return opts, nil
 }
 
 func parseOpen(cjson *C.char) ([]sarekpdf.Option, error) {
@@ -108,7 +150,7 @@ func parseOpen(cjson *C.char) ([]sarekpdf.Option, error) {
 			}
 		}
 	}
-	return o.toOptions(), nil
+	return o.toOptions()
 }
 
 func setErr(errOut **C.char, err error) C.int {
@@ -258,8 +300,11 @@ func call(doc *sarekpdf.Document, op string, a callArgs) ([]byte, error) {
 		return json.Marshal(map[string]any{"pages": doc.NumPages(), "version": doc.Version(),
 			"encrypted": doc.Encrypted(), "metadata": doc.Metadata(), "outline": doc.Outline()})
 	case "text":
-		t, err := doc.Text(ctx, pages...)
-		return []byte(t), err
+		res, err := doc.Extract(ctx, pages...)
+		if res == nil {
+			return nil, err
+		}
+		return []byte(res.TextWithNotices()), err
 	case "xml", "docx":
 		res, err := doc.Extract(ctx, pages...)
 		if res == nil {
@@ -289,12 +334,14 @@ func call(doc *sarekpdf.Document, op string, a callArgs) ([]byte, error) {
 			Text     string   `json:"text"`
 			Original string   `json:"original,omitempty"`
 			BBox     jsonRect `json:"bbox"`
+			Source   string   `json:"source"`
+			Conf     float64  `json:"confidence"`
 		}
 		out := make([]jp, 0, len(ps))
 		for _, p := range ps {
 			b := p.Paragraph.BBox
 			out = append(out, jp{p.Page, p.Paragraph.Role.String(), p.Paragraph.Level, p.Paragraph.Text(),
-				p.Paragraph.Original, jsonRect{b.X0, b.Y0, b.X1, b.Y1}})
+				p.Paragraph.Original, jsonRect{b.X0, b.Y0, b.X1, b.Y1}, p.Paragraph.Source().String(), p.Paragraph.Confidence()})
 		}
 		return json.Marshal(out)
 	case "headings":
@@ -320,13 +367,14 @@ func call(doc *sarekpdf.Document, op string, a callArgs) ([]byte, error) {
 		}
 		if op == "search" {
 			type jm struct {
-				Page  int        `json:"page"`
-				Text  string     `json:"text"`
-				Rects []jsonRect `json:"rects"`
+				Page   int        `json:"page"`
+				Text   string     `json:"text"`
+				Rects  []jsonRect `json:"rects"`
+				Source string     `json:"source"`
 			}
 			out := make([]jm, 0, len(ms))
 			for _, m := range ms {
-				out = append(out, jm{m.Page, m.Text, rects(m.Rects)})
+				out = append(out, jm{m.Page, m.Text, rects(m.Rects), m.Source.String()})
 			}
 			return json.Marshal(out)
 		}

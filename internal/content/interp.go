@@ -64,6 +64,9 @@ type ImagePlacement struct {
 	BBox   model.Rect
 	Stream *pdf.Stream // image XObject or synthesised inline image
 	Mask   bool        // ImageMask
+	// CTM maps image space (unit square, origin bottom-left) to display
+	// space. Pixel (px, py) of a W×H image is at (px/W, 1-py/H).
+	CTM Matrix
 }
 
 // Result is the output of interpreting one page.
@@ -611,7 +614,7 @@ func (in *Interpreter) addImage(s *pdf.Stream) {
 		bb.X1, bb.Y1 = max(bb.X1, p.X), max(bb.Y1, p.Y)
 	}
 	mask, _ := in.r.Resolve(s.Dict["ImageMask"]).(pdf.Boolean)
-	in.res.Images = append(in.res.Images, ImagePlacement{BBox: bb, Stream: s, Mask: bool(mask)})
+	in.res.Images = append(in.res.Images, ImagePlacement{BBox: bb, Stream: s, Mask: bool(mask), CTM: ctm})
 }
 
 var inlineKeys = map[pdf.Name]pdf.Name{

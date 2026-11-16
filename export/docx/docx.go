@@ -8,6 +8,8 @@
 //   - images     → inline pictures (JPEG/PNG)
 //   - drawings   → inline SVG pictures with a PNG fallback
 //   - pages      → page breaks; page size from the first page
+//   - OCR text   → "OCR Text" paragraph style (orange left bar) and a Word
+//     comment on each OCR page stating engine and mean confidence
 package docx
 
 import (
@@ -33,6 +35,9 @@ type Options struct {
 	NoDrawings bool
 	// NoImages omits raster images.
 	NoImages bool
+	// KeepOCRImages keeps page images whose text was recognised by OCR
+	// (by default they are omitted because their text is already present).
+	KeepOCRImages bool
 }
 
 const emuPerPt = 12700
@@ -42,12 +47,20 @@ type media struct {
 	data             []byte
 }
 
+type comment struct {
+	id   int
+	text string
+}
+
 type writer struct {
-	o      Options
-	sb     strings.Builder
-	media  []media
-	nextID int
-	maxW   float64 // max content width in points
+	o        Options
+	comments []comment
+	// pending is the OCR notice to attach to the next OCR paragraph.
+	pending string
+	sb      strings.Builder
+	media   []media
+	nextID  int
+	maxW    float64 // max content width in points
 }
 
 // Write writes doc as DOCX to w.
@@ -66,6 +79,7 @@ func Write(w io.Writer, doc *model.Document, o Options) error {
 		if i > 0 && !o.NoPageBreaks {
 			x.sb.WriteString(`<w:p><w:r><w:br w:type="page"/></w:r></w:p>`)
 		}
+		x.pending = p.OCRNotice()
 		for _, b := range p.Blocks {
 			x.block(b)
 		}
@@ -88,6 +102,12 @@ func Write(w io.Writer, doc *model.Document, o Options) error {
 		{"word/_rels/document.xml.rels", x.docRels()},
 		{"word/document.xml", x.sb.String()},
 	}
+	ct := contentTypes
+	if len(x.comments) > 0 {
+		files = append(files, struct{ name, body string }{"word/comments.xml", x.commentsXML()})
+		ct = strings.Replace(ct, "</Types>", `<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/></Types>`, 1)
+	}
+	files[0].body = ct
 	for _, f := range files {
 		fw, err := zw.Create(f.name)
 		if err != nil {
@@ -163,7 +183,7 @@ func (x *writer) block(b model.Block) {
 	case *model.Table:
 		x.table(v)
 	case *model.Image:
-		if !x.o.NoImages {
+		if !x.o.NoImages && (!v.OCRSource || x.o.KeepOCRImages) {
 			x.image(v)
 		}
 	case *model.Drawing:
@@ -174,6 +194,7 @@ func (x *writer) block(b model.Block) {
 }
 
 func (x *writer) paragraph(p *model.Paragraph) {
+	isOCR := p.Source() == model.SourceOCR
 	x.sb.WriteString("<w:p><w:pPr>")
 	switch p.Role {
 	case model.RoleHeading:
@@ -183,6 +204,10 @@ func (x *writer) paragraph(p *model.Paragraph) {
 		x.sb.WriteString(`<w:pStyle w:val="ListParagraph"/>`)
 	case model.RolePageHeader, model.RolePageFooter:
 		x.sb.WriteString(`<w:pStyle w:val="HeaderFooterText"/>`)
+	default:
+		if isOCR {
+			x.sb.WriteString(`<w:pStyle w:val="OCRText"/>`)
+		}
 	}
 	if p.RTL {
 		x.sb.WriteString(`<w:bidi/>`)
@@ -196,10 +221,30 @@ func (x *writer) paragraph(p *model.Paragraph) {
 		x.sb.WriteString(`<w:jc w:val="both"/>`)
 	}
 	x.sb.WriteString("</w:pPr>")
+	cid := -1
+	if isOCR && x.pending != "" {
+		cid = len(x.comments)
+		x.comments = append(x.comments, comment{id: cid, text: x.pending})
+		x.pending = ""
+		fmt.Fprintf(&x.sb, `<w:commentRangeStart w:id="%d"/>`, cid)
+	}
 	for _, r := range p.Runs {
 		x.run(r)
 	}
+	if cid >= 0 {
+		fmt.Fprintf(&x.sb, `<w:commentRangeEnd w:id="%d"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="%d"/></w:r>`, cid, cid)
+	}
 	x.sb.WriteString("</w:p>")
+}
+
+func (x *writer) commentsXML() string {
+	var sb strings.Builder
+	sb.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">`)
+	for _, c := range x.comments {
+		fmt.Fprintf(&sb, `<w:comment w:id="%d" w:author="sarek_pdf" w:initials="OCR"><w:p><w:r><w:t xml:space="preserve">%s</w:t></w:r></w:p></w:comment>`, c.id, esc(c.text))
+	}
+	sb.WriteString("</w:comments>")
+	return sb.String()
 }
 
 func (x *writer) run(r model.Run) {
@@ -423,6 +468,9 @@ func (x *writer) docRels() string {
 	for _, m := range x.media {
 		fmt.Fprintf(&sb, `<Relationship Id="%s" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/%s"/>`, m.rid, m.name)
 	}
+	if len(x.comments) > 0 {
+		sb.WriteString(`<Relationship Id="rIdComments" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/>`)
+	}
 	sb.WriteString("</Relationships>")
 	return sb.String()
 }
@@ -448,6 +496,6 @@ var stylesXML = func() string {
 	for i := 1; i <= 6; i++ {
 		fmt.Fprintf(&sb, `<w:style w:type="paragraph" w:styleId="Heading%d"><w:name w:val="heading %d"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="9"/><w:qFormat/><w:pPr><w:keepNext/><w:spacing w:before="240" w:after="120"/><w:outlineLvl w:val="%d"/></w:pPr><w:rPr><w:b/><w:sz w:val="%d"/><w:szCs w:val="%d"/></w:rPr></w:style>`, i, i, i-1, sizes[i-1], sizes[i-1])
 	}
-	sb.WriteString(`<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="34"/><w:qFormat/><w:pPr><w:ind w:left="360"/></w:pPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="HeaderFooterText"><w:name w:val="Header Footer Text"/><w:basedOn w:val="Normal"/><w:rPr><w:color w:val="7F7F7F"/><w:sz w:val="16"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`)
+	sb.WriteString(`<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="34"/><w:qFormat/><w:pPr><w:ind w:left="360"/></w:pPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="HeaderFooterText"><w:name w:val="Header Footer Text"/><w:basedOn w:val="Normal"/><w:rPr><w:color w:val="7F7F7F"/><w:sz w:val="16"/></w:rPr></w:style><w:style w:type="paragraph" w:customStyle="1" w:styleId="OCRText"><w:name w:val="OCR Text"/><w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:pBdr><w:left w:val="single" w:sz="12" w:space="4" w:color="F0A30A"/></w:pBdr></w:pPr></w:style><w:style w:type="character" w:styleId="CommentReference"><w:name w:val="annotation reference"/><w:rPr><w:sz w:val="16"/></w:rPr></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`)
 	return sb.String()
 }()

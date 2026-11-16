@@ -33,7 +33,8 @@ namespace SarekPdf
     public sealed record SearchHit(
         [property: JsonPropertyName("page")] int Page,
         [property: JsonPropertyName("text")] string Text,
-        [property: JsonPropertyName("rects")] List<Rect> Rects);
+        [property: JsonPropertyName("rects")] List<Rect> Rects,
+        [property: JsonPropertyName("source")] string Source);
 
     public sealed record Heading(
         [property: JsonPropertyName("level")] int Level,
@@ -47,7 +48,9 @@ namespace SarekPdf
         [property: JsonPropertyName("level")] int Level,
         [property: JsonPropertyName("text")] string Text,
         [property: JsonPropertyName("original")] string? Original,
-        [property: JsonPropertyName("bbox")] Rect BBox);
+        [property: JsonPropertyName("bbox")] Rect BBox,
+        [property: JsonPropertyName("source")] string Source,
+        [property: JsonPropertyName("confidence")] double Confidence);
 
     /// <summary>Options used when opening a document.</summary>
     public sealed class OpenOptions
@@ -57,6 +60,16 @@ namespace SarekPdf
         [JsonPropertyName("tables")] public bool? Tables { get; set; }
         [JsonPropertyName("drawings")] public bool? Drawings { get; set; }
         [JsonPropertyName("images")] public bool? Images { get; set; }
+        /// <summary>OCR fallback (native library built with -tags onnx).</summary>
+        [JsonPropertyName("ocr")] public OcrOptions? Ocr { get; set; }
+    }
+
+    /// <summary>OCR settings. Text produced by OCR is marked with Source = "ocr".</summary>
+    public sealed class OcrOptions
+    {
+        [JsonPropertyName("models")] public string Models { get; set; } = "";
+        [JsonPropertyName("lang")] public string Lang { get; set; } = "english";
+        [JsonPropertyName("mode")] public string Mode { get; set; } = "auto";
     }
 
     /// <summary>Search options.</summary>

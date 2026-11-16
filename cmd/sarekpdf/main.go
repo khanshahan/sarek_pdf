@@ -25,6 +25,8 @@ import (
 	"github.com/khanshahan/sarek_pdf/export/docx"
 	"github.com/khanshahan/sarek_pdf/export/xmlexport"
 	"github.com/khanshahan/sarek_pdf/model"
+	"github.com/khanshahan/sarek_pdf/ocr"
+	"github.com/khanshahan/sarek_pdf/ocr/paddle"
 )
 
 func usage() {
@@ -64,6 +66,9 @@ func main() {
 	embed := fs.Bool("embed-images", false, "xml: embed image data as base64")
 	geometry := fs.Bool("geometry", true, "xml: include line/span coordinates")
 	timeout := fs.Duration("timeout", 0, "overall timeout (e.g. 2m)")
+	ocrModels := fs.String("ocr-models", "", "OCR fallback: PaddleOCR ONNX model directory (binary built with -tags onnx)")
+	ocrLang := fs.String("ocr-lang", "english", "OCR recognition model: english, latin, eslav, greek, korean, chinese, …")
+	ocrModeF := fs.String("ocr-mode", "auto", "OCR mode: auto (pages without text layer), always, never")
 	fs.Parse(os.Args[2:])
 	if fs.NArg() != 1 {
 		usage()
@@ -80,6 +85,13 @@ func main() {
 	opts := []sarekpdf.Option{sarekpdf.WithPassword(*password), sarekpdf.WithWorkers(*workers), sarekpdf.WithImages(*images)}
 	if *llmURL != "" {
 		opts = append(opts, sarekpdf.WithCorrector(&llm.Corrector{Engine: openai.New(*llmURL, *llmModel), Concurrency: *llmConc}))
+	}
+	if *ocrModels != "" {
+		eng, err := paddle.New(paddle.FromDir(*ocrModels, *ocrLang))
+		check(err)
+		defer eng.Close()
+		mode := map[string]ocr.Mode{"auto": ocr.Auto, "always": ocr.Always, "never": ocr.Never}[*ocrModeF]
+		opts = append(opts, sarekpdf.WithOCR(eng, mode))
 	}
 	start := time.Now()
 	var doc *sarekpdf.Document
@@ -126,7 +138,7 @@ func main() {
 		case "xml":
 			check(xmlexport.Write(w, res, xmlexport.Options{Geometry: *geometry, EmbedImages: *embed, Paths: true}))
 		case "text":
-			_, err := io.WriteString(w, res.Text()+"\n")
+			_, err := io.WriteString(w, res.TextWithNotices()+"\n")
 			check(err)
 		default:
 			die("unknown format " + *format)
@@ -141,7 +153,11 @@ func main() {
 		if cmd == "search" {
 			for _, m := range ms {
 				r := m.Rects[0]
-				fmt.Fprintf(w, "page %d [%.1f %.1f %.1f %.1f]: %s\n", m.Page, r.X0, r.Y0, r.X1, r.Y1, m.Text)
+				src := ""
+				if m.Source == model.SourceOCR {
+					src = " (OCR)"
+				}
+				fmt.Fprintf(w, "page %d [%.1f %.1f %.1f %.1f]%s: %s\n", m.Page, r.X0, r.Y0, r.X1, r.Y1, src, m.Text)
 			}
 			fmt.Fprintf(os.Stderr, "%d matches\n", len(ms))
 			return

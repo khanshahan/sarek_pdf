@@ -74,6 +74,11 @@ The library must support:
 - Extraction of **all text**, **paragraphs**, **headings**, **tables**
   (with structure: rows, columns, merged cells), **drawings** (vector
   graphics) and **images**.
+- **Multi-column layouts** (2, 3 or more columns) read in correct order.
+- **OCR fallback** for pages without a usable text layer, through a
+  pluggable engine. OCR output must always be identifiable as OCR
+  (marked in the model and in every export) together with its confidence;
+  scanned pages processed without OCR must be flagged, never silently empty.
 - **Search** (plain and regular expression) returning page numbers and
   match rectangles.
 - **Highlighting** of text (writing highlight annotations as an
@@ -112,3 +117,4 @@ stable C ABI (`c-shared` build) with thin language bindings.
 | Date       | Article | Change            | Approved by   |
 |------------|---------|-------------------|---------------|
 | 2026-11-16 | —       | Initial version   | Project owner |
+| 2026-11-16 | 5       | Multi-column reading order; OCR fallback with mandatory OCR labelling | Project owner |

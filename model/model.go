@@ -7,6 +7,7 @@
 package model
 
 import (
+	"fmt"
 	"strings"
 )
 
@@ -73,6 +74,19 @@ type Style struct {
 	Color  Color
 }
 
+// Source identifies where text came from.
+type Source uint8
+
+const (
+	// SourceTextLayer: text decoded from the PDF's own text objects.
+	SourceTextLayer Source = iota
+	// SourceOCR: text recognised from page images by an OCR engine. It is
+	// a machine reading of pixels, not text stored in the PDF.
+	SourceOCR
+)
+
+func (s Source) String() string { return [...]string{"text-layer", "ocr"}[s] }
+
 // Span is a run of text on one line with a uniform style.
 type Span struct {
 	Text  string
@@ -82,8 +96,15 @@ type Span struct {
 	// right edge of the last rune (len = runes+1). Used for precise
 	// search hits and highlighting.
 	Edges []float64
-	// Invisible marks text drawn with render mode 3 (e.g. OCR layers).
+	// Invisible marks text drawn with render mode 3 (e.g. OCR layers
+	// embedded in the PDF by a scanner).
 	Invisible bool
+	// Source tells whether the text comes from the PDF text layer or from
+	// OCR performed by sarek_pdf.
+	Source Source
+	// Confidence is the OCR engine's confidence in [0,1] for OCR text;
+	// it is 1 for text-layer text.
+	Confidence float64
 }
 
 // Line is a visual line of text.
@@ -157,6 +178,33 @@ type Paragraph struct {
 	// Original holds the text before language-model correction; empty
 	// when the paragraph was not changed.
 	Original string
+}
+
+// Source returns SourceOCR if any of the paragraph's text was produced
+// by OCR.
+func (p *Paragraph) Source() Source {
+	for _, l := range p.Lines {
+		for _, s := range l.Spans {
+			if s.Source == SourceOCR {
+				return SourceOCR
+			}
+		}
+	}
+	return SourceTextLayer
+}
+
+// Confidence returns the lowest OCR confidence among the paragraph's
+// spans (1 for text-layer paragraphs).
+func (p *Paragraph) Confidence() float64 {
+	c := 1.0
+	for _, l := range p.Lines {
+		for _, s := range l.Spans {
+			if s.Source == SourceOCR {
+				c = min(c, s.Confidence)
+			}
+		}
+	}
+	return c
 }
 
 // Bounds implements Block.
@@ -279,11 +327,25 @@ type Image struct {
 	// data was not extracted.
 	Format string
 	Data   []byte
+	// OCRSource is true when the text of this image was recognised by OCR
+	// and is present on the page as text blocks.
+	OCRSource bool
 }
 
 // Bounds implements Block.
 func (i *Image) Bounds() Rect { return i.BBox }
 func (*Image) isBlock()       {}
+
+// OCRInfo describes OCR performed on a page.
+type OCRInfo struct {
+	Engine string // engine name, e.g. "paddleocr-onnx"
+	// Reason is why OCR ran: "no-text-layer", "unmapped-text" or "forced".
+	Reason     string
+	Lines      int     // recognised lines
+	Confidence float64 // mean line confidence in [0,1]
+	// Errors lists images that could not be decoded or recognised.
+	Errors []string
+}
 
 // Page is one extracted page.
 type Page struct {
@@ -291,6 +353,13 @@ type Page struct {
 	Width  float64
 	Height float64
 	Blocks []Block
+	// OCR is non-nil when OCR was performed on the page. Text produced by
+	// OCR is marked with Source == SourceOCR on its spans.
+	OCR *OCRInfo
+	// NoTextLayer is true when the page appears to be scanned (images but
+	// no usable text layer) and no OCR text was produced for it, so its
+	// content is missing from the extracted text.
+	NoTextLayer bool
 }
 
 // Paragraphs returns all paragraphs on the page in reading order,
@@ -361,6 +430,33 @@ type Document struct {
 	Metadata Metadata
 	Outline  []OutlineItem
 	Pages    []*Page
+}
+
+// OCRNotice returns a one-line notice for pages whose text was produced
+// by OCR or that lack a text layer, or "" for pages read normally.
+func (p *Page) OCRNotice() string {
+	if p.NoTextLayer {
+		return fmt.Sprintf("[page %d: no usable text layer (scanned page); enable OCR to recognise its images]", p.Number)
+	}
+	if p.OCR == nil || p.OCR.Lines == 0 {
+		return ""
+	}
+	return fmt.Sprintf("[page %d: text recognised by OCR (%s), mean confidence %.1f%%; not from the PDF text layer]",
+		p.Number, p.OCR.Engine, p.OCR.Confidence*100)
+}
+
+// TextWithNotices is like Text but precedes the text of OCR pages with
+// their OCRNotice, so plain-text consumers can tell OCR text apart.
+func (d *Document) TextWithNotices() string {
+	parts := make([]string, len(d.Pages))
+	for i, p := range d.Pages {
+		if n := p.OCRNotice(); n != "" {
+			parts[i] = n + "\n" + p.Text()
+		} else {
+			parts[i] = p.Text()
+		}
+	}
+	return strings.Join(parts, "\n\f")
 }
 
 // Text returns the full document text, pages separated by form feeds.

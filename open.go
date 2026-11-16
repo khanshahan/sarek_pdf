@@ -29,6 +29,7 @@ import (
 	"github.com/khanshahan/sarek_pdf/internal/font"
 	"github.com/khanshahan/sarek_pdf/internal/pdf"
 	"github.com/khanshahan/sarek_pdf/model"
+	"github.com/khanshahan/sarek_pdf/ocr"
 )
 
 // ErrEncrypted is returned when the password is missing or wrong.
@@ -54,12 +55,15 @@ type config struct {
 	httpClient    *http.Client
 	rules         bool
 	cidMaps       map[string]map[uint32]rune
+	ocr           ocr.Engine
+	ocrMode       ocr.Mode
+	ocrMinConf    float64
 }
 
 func defaults() config {
 	return config{
 		workers: runtime.GOMAXPROCS(0), tables: true, drawings: true, images: true,
-		imageData: true, cachePages: true, maxSize: 2 << 30, rules: true,
+		imageData: true, cachePages: true, maxSize: 2 << 30, rules: true, ocrMinConf: 0.5,
 		httpClient: &http.Client{Timeout: 10 * time.Minute},
 	}
 }
@@ -84,6 +88,18 @@ func WithCorrector(cr correct.Corrector) Option { return func(c *config) { c.cor
 
 // WithCorrectTables also sends table-cell text to the corrector.
 func WithCorrectTables(on bool) Option { return func(c *config) { c.correctTables = on } }
+
+// WithOCR enables OCR with the given engine (off by default). In
+// ocr.Auto mode OCR runs only on pages without a usable text layer.
+// Every OCR span is marked model.SourceOCR with the engine's confidence,
+// and Page.OCR describes what was done.
+func WithOCR(e ocr.Engine, mode ocr.Mode) Option {
+	return func(c *config) { c.ocr, c.ocrMode = e, mode }
+}
+
+// WithOCRMinConfidence drops OCR lines whose confidence is below v
+// (default 0.5). Dropped lines are counted in Page.OCR.Errors.
+func WithOCRMinConfidence(v float64) Option { return func(c *config) { c.ocrMinConf = v } }
 
 // WithTables enables/disables table detection (default on).
 func WithTables(on bool) Option { return func(c *config) { c.tables = on } }

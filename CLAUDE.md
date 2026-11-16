@@ -10,4 +10,6 @@ Read and follow [CONSTITUTION.md](CONSTITUTION.md) before any change. In particu
 
 Layout: `internal/pdf` (objects, xref, filters, crypto, writer) → `internal/font` →
 `internal/content` (interpreter) → `internal/layout` (blocks) → root package API →
-`export/{docx,xmlexport}`, `correct/...`, `capi` (C ABI), `bindings/{python,dotnet}`.
+`export/{docx,xmlexport}`, `correct/...` (LLM), `ocr/...` (OCR), `capi` (C ABI),
+`bindings/{python,dotnet}`. Architecture and public interfaces: `docs/architecture.md`
+(keep its Mermaid diagrams in sync with the code).

@@ -91,4 +91,10 @@ authorization of the copyright holder.
 
 * **llama.cpp** (MIT) — linked only when building with `-tags llamacpp`.
   Its MIT notice must then be added to your distribution.
+* **ONNX Runtime** (MIT, Microsoft) — linked only when building with `-tags onnx`
+  for the OCR engine. Add its MIT notice (and its bundled third-party notices) to
+  your distribution when you ship it.
+* **PaddleOCR PP-OCR models** (Apache-2.0) — used by the OCR engine at runtime, never
+  shipped in this repository. If you redistribute them, include the Apache-2.0
+  license text and any NOTICE file.
 * **Model weights** are never shipped. Check the license of any model you use.

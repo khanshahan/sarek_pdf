@@ -68,14 +68,35 @@ func (d *Document) extractPage(ctx context.Context, n int) (pg *model.Page, err 
 			imgs = append(imgs, images.Convert(d.r, ip.Stream, bb, d.cfg.imageData))
 		}
 	}
-	blocks := layout.Analyze(res, imgs, layout.Options{Tables: d.cfg.tables, Drawings: d.cfg.drawings})
+	lopts := layout.Options{Tables: d.cfg.tables, Drawings: d.cfg.drawings}
+	var ocrInfo *model.OCRInfo
+	if reason := d.needOCR(res); reason != "" {
+		var used map[*content.ImagePlacement]bool
+		lopts.OCR, ocrInfo, used = d.runOCR(ctx, res, reason)
+		for i, ip := range res.Images {
+			if used[&res.Images[i]] {
+				for _, im := range imgs {
+					if im.BBox == ip.BBox {
+						im.OCRSource = true
+					}
+				}
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+	blocks := layout.Analyze(res, imgs, lopts)
 	// Layout copies everything it keeps; recycle the glyph buffer.
 	if cap(res.Glyphs) <= 1<<20 {
 		clear(res.Glyphs)
 		*gb = res.Glyphs[:0]
 		glyphPool.Put(gb)
 	}
-	page := &model.Page{Number: n, Width: res.Width, Height: res.Height, Blocks: blocks}
+	page := &model.Page{Number: n, Width: res.Width, Height: res.Height, Blocks: blocks, OCR: ocrInfo}
+	if ocrInfo == nil || ocrInfo.Lines == 0 {
+		page.NoTextLayer = textLayerProblem(res) != ""
+	}
 	if d.cfg.rules {
 		normalizePage(page)
 	}

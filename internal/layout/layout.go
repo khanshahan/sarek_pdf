@@ -14,6 +14,64 @@ import (
 type Options struct {
 	Tables   bool // detect tables
 	Drawings bool // group vector paths into drawings
+	// OCR holds text lines recognised from page images. They are laid out
+	// together with text-layer text and marked as model.SourceOCR.
+	OCR []OCRLine
+}
+
+// OCRLine is a recognised line in display coordinates.
+type OCRLine struct {
+	Text       string
+	BBox       model.Rect
+	Confidence float64
+}
+
+// ocrFragments converts OCR lines into fragments, skipping lines that
+// overlap text already present in the text layer.
+func ocrFragments(lines []OCRLine, existing []*frag) []*frag {
+	// Detector boxes jitter in height; snap sizes near the median height
+	// to the median so body text has one consistent size.
+	hs := make([]float64, 0, len(lines))
+	for _, l := range lines {
+		hs = append(hs, l.BBox.H())
+	}
+	sort.Float64s(hs)
+	medH := 0.0
+	if len(hs) > 0 {
+		medH = hs[len(hs)/2]
+	}
+	var out []*frag
+	for _, l := range lines {
+		text := strings.TrimSpace(l.Text)
+		if text == "" || l.BBox.Empty() {
+			continue
+		}
+		dup := false
+		for _, f := range existing {
+			if f.bbox.Intersect(l.BBox).Area() > 0.5*min(f.bbox.Area(), l.BBox.Area()) {
+				dup = true
+				break
+			}
+		}
+		if dup {
+			continue
+		}
+		h := l.BBox.H()
+		if medH > 0 && math.Abs(h-medH) <= 0.25*medH {
+			h = medH
+		}
+		size := math.Round(h/1.2*2) / 2 // box height ≈ ascent+descent ≈ 1.2 em
+		n := utf8.RuneCountInString(text)
+		edges := make([]float64, n+1)
+		for i := range edges {
+			edges[i] = l.BBox.X0 + l.BBox.W()*float64(i)/float64(n)
+		}
+		f := &frag{bbox: l.BBox, baseline: l.BBox.Y1 - 0.2*h, size: size, lastX1: l.BBox.X1}
+		f.spans = []model.Span{{Text: text, BBox: l.BBox, Edges: edges,
+			Style: model.Style{Size: size}, Source: model.SourceOCR, Confidence: l.Confidence}}
+		out = append(out, f)
+	}
+	return out
 }
 
 // item is an element participating in reading-order segmentation.
@@ -28,6 +86,9 @@ type item struct {
 func Analyze(res *content.Result, images []*model.Image, opts Options) []model.Block {
 	page := model.Rect{X1: res.Width, Y1: res.Height}
 	frags := buildFragments(res.Glyphs, page)
+	if len(opts.OCR) > 0 {
+		frags = append(frags, ocrFragments(opts.OCR, frags)...)
+	}
 	body := bodySize(frags)
 
 	var blocks []model.Block
@@ -296,9 +357,15 @@ func (s *segmenter) cut(items []*item, depth int) [][]*item {
 			return s.cutGroups(groups, depth)
 		}
 	}
-	// 2. Horizontal bands.
+	// 2. Horizontal bands. Adjacent bands that share the same column
+	// gutters belong to one multi-column section (a gap at the same height
+	// in every column must not interleave the columns).
 	if len(yg) > 0 {
-		return s.cutGroups(splitBy(items, yg, false), depth)
+		bands := s.mergeColumnBands(splitBy(items, yg, false), 0.9*med)
+		if len(bands) == 1 && len(xg) > 0 {
+			return s.cutGroups(splitBy(items, xg, true), depth)
+		}
+		return s.cutGroups(bands, depth)
 	}
 	// 3. Any column split.
 	if len(xg) > 0 {
@@ -308,6 +375,46 @@ func (s *segmenter) cut(items []*item, depth int) [][]*item {
 		return s.cutGroups(splitBy(items, xg, true), depth)
 	}
 	return [][]*item{items}
+}
+
+// mergeColumnBands joins consecutive bands whose column gutters line up.
+func (s *segmenter) mergeColumnBands(bands [][]*item, minGap float64) [][]*item {
+	type sig struct {
+		gaps []gap
+	}
+	sigOf := func(b []*item) []gap {
+		if len(b) < 2 {
+			return nil
+		}
+		return projGaps(b, true, minGap)
+	}
+	same := func(a, b []gap) bool {
+		if len(a) == 0 || len(a) != len(b) {
+			return false
+		}
+		for i := range a {
+			if a[i].hi < b[i].lo || b[i].hi < a[i].lo {
+				return false // gutters do not overlap
+			}
+		}
+		return true
+	}
+	var out [][]*item
+	var prev []gap
+	for _, b := range bands {
+		g := sigOf(b)
+		if n := len(out); n > 0 && same(prev, g) {
+			out[n-1] = append(out[n-1], b...)
+			// Keep the intersection of gutters as the merged signature.
+			for i := range prev {
+				prev[i].lo, prev[i].hi = max(prev[i].lo, g[i].lo), min(prev[i].hi, g[i].hi)
+			}
+			continue
+		}
+		out = append(out, b)
+		prev = g
+	}
+	return out
 }
 
 func (s *segmenter) cutGroups(groups [][]*item, depth int) [][]*item {
@@ -370,13 +477,21 @@ func (s *segmenter) tryTextTable(items []*item, region model.Rect, med float64) 
 				colFr = append(colFr, f)
 			}
 		}
-		w := 0.0
+		// Reference width: 75th percentile, robust to titles and headers.
+		ws := make([]float64, 0, len(colFr))
 		for _, f := range colFr {
-			w = max(w, f.bbox.W())
+			ws = append(ws, f.bbox.W())
+		}
+		sort.Float64s(ws)
+		w := 0.0
+		if len(ws) > 0 {
+			w = ws[len(ws)*3/4]
 		}
 		for _, f := range colFr {
 			total++
-			if f.bbox.W() > 0.85*w && w > 15*med {
+			// Prose lines fill their column and are long; numeric table
+			// cells may fill a narrow column but are short.
+			if f.bbox.W() > 0.85*w && utf8.RuneCountInString(f.text()) >= 15 {
 				filled++
 			}
 		}

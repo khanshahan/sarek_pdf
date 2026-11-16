@@ -15,7 +15,12 @@
 //	      <cell row col rowspan colspan x y w h fill><paragraph/>…</cell>
 //	    </table>
 //	    <drawing x y w h><path d stroke fill stroke-width fill-rule/><label/></drawing>
-//	    <image x y w h width height format>base64?</image>
+//	    <image x y w h width height format ocr-source>base64?</image>
+//	    <ocr engine reason lines confidence/>   only on pages that were OCR'd
+//
+// Text recognised by OCR carries source="ocr" and confidence="0.000–1.000"
+// on its paragraph and span elements; the page carries ocr="true".
+//
 //	  </page>
 //	</document>
 //
@@ -174,8 +179,23 @@ func (x *writer) outline(items []model.OutlineItem) {
 }
 
 func (x *writer) page(p *model.Page) {
-	x.open("page", "number", strconv.Itoa(p.Number), "width", f(p.Width), "height", f(p.Height))
+	attrs := []string{"number", strconv.Itoa(p.Number), "width", f(p.Width), "height", f(p.Height)}
+	if p.OCR != nil {
+		attrs = append(attrs, "ocr", "true")
+	}
+	if p.NoTextLayer {
+		attrs = append(attrs, "text-layer", "missing")
+	}
+	x.open("page", attrs...)
 	x.raw("\n")
+	if o := p.OCR; o != nil {
+		x.open("ocr", "engine", o.Engine, "reason", o.Reason, "lines", strconv.Itoa(o.Lines),
+			"confidence", strconv.FormatFloat(o.Confidence, 'f', 3, 64))
+		for _, e := range o.Errors {
+			x.elem("error", e)
+		}
+		x.close("ocr")
+	}
 	for _, b := range p.Blocks {
 		switch v := b.(type) {
 		case *model.Paragraph:
@@ -197,6 +217,9 @@ func (x *writer) paragraph(p *model.Paragraph) {
 		attrs = append(attrs, "level", strconv.Itoa(p.Level))
 	}
 	attrs = append(attrs, "align", p.Align.String())
+	if p.Source() == model.SourceOCR {
+		attrs = append(attrs, "source", "ocr", "confidence", strconv.FormatFloat(p.Confidence(), 'f', 3, 64))
+	}
 	if p.RTL {
 		attrs = append(attrs, "dir", "rtl")
 	}
@@ -229,6 +252,9 @@ func (x *writer) line(l *model.Line, tag string) {
 		}
 		if s.Invisible {
 			attrs = append(attrs, "invisible", "true")
+		}
+		if s.Source == model.SourceOCR {
+			attrs = append(attrs, "source", "ocr", "confidence", strconv.FormatFloat(s.Confidence, 'f', 3, 64))
 		}
 		attrs = append(attrs, box(s.BBox)...)
 		x.open("span", attrs...)
@@ -327,6 +353,9 @@ func (x *writer) drawing(d *model.Drawing) {
 
 func (x *writer) image(im *model.Image) {
 	attrs := append(box(im.BBox), "width", strconv.Itoa(im.Width), "height", strconv.Itoa(im.Height), "format", im.Format)
+	if im.OCRSource {
+		attrs = append(attrs, "ocr-source", "true")
+	}
 	if !x.o.EmbedImages || len(im.Data) == 0 {
 		x.empty("image", attrs...)
 		x.raw("\n")

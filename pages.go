@@ -7,7 +7,9 @@ import (
 )
 
 // ParsePageRanges parses "1-3,5,8-" into 1-based page numbers for a
-// document with n pages. An empty spec selects all pages.
+// document with n pages. An empty spec selects all pages. The end of a
+// range is clamped to the last page ("1-10" on a 3-page file is 1-3);
+// a single page or range start beyond the last page is an error.
 func ParsePageRanges(spec string, n int) ([]int, error) {
 	spec = strings.TrimSpace(spec)
 	if spec == "" {
@@ -35,7 +37,10 @@ func ParsePageRanges(spec string, n int) ([]int, error) {
 		}
 		a, err1 := strconv.Atoi(lo)
 		b, err2 := strconv.Atoi(hi)
-		if err1 != nil || err2 != nil || a < 1 || b > n || a > b {
+		if lo != hi && b > n {
+			b = n
+		}
+		if err1 != nil || err2 != nil || a < 1 || a > n || b > n || a > b {
 			return nil, fmt.Errorf("sarekpdf: invalid page range %q for %d pages", part, n)
 		}
 		for p := a; p <= b; p++ {
