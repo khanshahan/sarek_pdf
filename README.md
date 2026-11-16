@@ -251,3 +251,11 @@ make test-ocr ORT_DIR=…           # real OCR test; needs SAREK_OCR_MODELS and 
 
 qpdf (Apache-2.0) is used by some tests as an external oracle; those tests skip when it is
 not installed. It is never linked or shipped.
+
+## License
+
+[MIT with patent reservation](LICENSE): the standard MIT permissions for copyright, with
+an explicit clause that **no patent rights are granted** (expressly, by implication or
+otherwise). Because of this clause the license is a modified MIT license, so automated
+license scanners may report it as "Other". Third-party notices for the Go runtime and
+optional components are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

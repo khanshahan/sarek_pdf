@@ -5,5 +5,9 @@
     <PackageId>SarekPdf</PackageId>
     <Version>0.1.0</Version>
     <Description>.NET bindings for the sarek_pdf native library.</Description>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
   </PropertyGroup>
+  <ItemGroup>
+    <None Include="../../../LICENSE" Pack="true" PackagePath="" />
+  </ItemGroup>
 </Project>
