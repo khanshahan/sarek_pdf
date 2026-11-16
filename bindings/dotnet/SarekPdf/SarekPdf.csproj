@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <PackageId>SarekPdf</PackageId>
+    <Version>0.1.0</Version>
+    <Description>.NET bindings for the sarek_pdf native library.</Description>
+  </PropertyGroup>
+</Project>

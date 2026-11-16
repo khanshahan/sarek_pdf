@@ -1,0 +1,6 @@
+/build/
+*.test
+*.out
+bindings/dotnet/**/bin/
+bindings/dotnet/**/obj/
+__pycache__/
