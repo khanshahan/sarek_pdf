@@ -163,6 +163,9 @@ namespace SarekPdf
         public string ToXml(string pages = "", bool geometry = true, bool embedImages = false) =>
             Encoding.UTF8.GetString(Call("xml", new { pages, geometry, embed_images = embedImages }));
         public byte[] ToDocx(string pages = "") => Call("docx", new { pages });
+        /// <summary>GitHub-flavoured Markdown; tables continued across pages are merged.</summary>
+        public string ToMarkdown(string pages = "", bool embedImages = false) =>
+            Encoding.UTF8.GetString(Call("markdown", new { pages, embed_images = embedImages }));
         public List<Paragraph> Paragraphs(string pages = "") => CallJson<List<Paragraph>>("paragraphs", new { pages });
         public List<Heading> Headings(string pages = "") => CallJson<List<Heading>>("headings", new { pages });
         public List<SearchHit> Search(string query) => Search(new SearchOptions { Query = query });

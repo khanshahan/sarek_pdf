@@ -1,7 +1,7 @@
 // Command sarekpdf is a command-line front end for the sarek_pdf library.
 //
 //	sarekpdf info      [flags] <file|url>
-//	sarekpdf convert   [flags] -f docx|xml|text -o out <file|url>
+//	sarekpdf convert   [flags] -f docx|xml|md|text -o out <file|url>
 //	sarekpdf search    [flags] -q query [-regex] <file|url>
 //	sarekpdf highlight [flags] -q query -o out.pdf <file|url>
 //	sarekpdf pages     [flags] -p 1-3,7 -o out.pdf <file|url>
@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/khanshahan/sarek_pdf/correct/llm"
 	"github.com/khanshahan/sarek_pdf/correct/llm/openai"
 	"github.com/khanshahan/sarek_pdf/export/docx"
+	"github.com/khanshahan/sarek_pdf/export/markdown"
 	"github.com/khanshahan/sarek_pdf/export/xmlexport"
 	"github.com/khanshahan/sarek_pdf/model"
 	"github.com/khanshahan/sarek_pdf/ocr"
@@ -34,7 +36,7 @@ func usage() {
 
 commands:
   info       page count, version, metadata, outline
-  convert    export to docx, xml or text (-f, -o)
+  convert    export to docx, xml, md (markdown) or text (-f, -o)
   search     find text (-q, -regex, -case, -word)
   highlight  write a copy with search hits highlighted (-q, -o)
   pages      extract pages into a new PDF (-p, -o)
@@ -54,7 +56,7 @@ func main() {
 	workers := fs.Int("workers", 0, "parallel pages (default: all CPUs)")
 	pages := fs.String("p", "", "page ranges, e.g. 1-3,7 (default: all)")
 	out := fs.String("o", "", "output file (default: stdout)")
-	format := fs.String("f", "text", "convert format: docx, xml, text")
+	format := fs.String("f", "text", "convert format: docx, xml, md (markdown), text")
 	query := fs.String("q", "", "search query")
 	regex := fs.Bool("regex", false, "query is a regular expression")
 	caseSens := fs.Bool("case", false, "case-sensitive search")
@@ -137,6 +139,22 @@ func main() {
 			check(docx.Write(w, res, docx.Options{}))
 		case "xml":
 			check(xmlexport.Write(w, res, xmlexport.Options{Geometry: *geometry, EmbedImages: *embed, Paths: true}))
+		case "md", "markdown":
+			o := markdown.DefaultOptions()
+			if *out != "" && *images {
+				// Images and drawings go to "<output>_assets/".
+				dir := strings.TrimSuffix(*out, filepath.Ext(*out)) + "_assets"
+				o.Assets = func(name string, data []byte) (string, error) {
+					if err := os.MkdirAll(dir, 0o755); err != nil {
+						return "", err
+					}
+					if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+						return "", err
+					}
+					return filepath.Base(dir) + "/" + name, nil
+				}
+			}
+			check(markdown.Write(w, res, o))
 		case "text":
 			_, err := io.WriteString(w, res.TextWithNotices()+"\n")
 			check(err)

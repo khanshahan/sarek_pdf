@@ -172,9 +172,14 @@ func plausibleTable(t *model.Table) bool {
 			}
 		}
 	}
-	if t.NumRows() == 1 || t.NumCols() == 1 {
-		// A box split into a single row/column: accept only if it holds
-		// several short cells (not a framed paragraph).
+	if t.NumCols() == 1 {
+		// A single column has no tabular structure: it is a frame or a box
+		// with separator lines around text, which reads better as paragraphs.
+		return false
+	}
+	if t.NumRows() == 1 {
+		// A box split into a single row: accept only if it holds several
+		// short cells (not a framed paragraph).
 		return nonEmpty >= 2 && words <= nonEmpty*25
 	}
 	return true

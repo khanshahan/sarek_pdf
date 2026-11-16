@@ -205,6 +205,29 @@ func clusterPositions(v []float64) []float64 {
 	return out
 }
 
+// minBand is the narrowest row or column a table can have; closer grid
+// lines are double borders (an outer and an inner rule), not cells.
+const minBand = 6.0
+
+// collapseDoubleRules drops grid positions that form bands narrower than
+// minBand, keeping the outer line at the table edges.
+func collapseDoubleRules(v []float64) []float64 {
+	if len(v) < 3 {
+		return v
+	}
+	out := []float64{v[0]}
+	for i := 1; i < len(v); i++ {
+		if v[i]-out[len(out)-1] < minBand {
+			if i == len(v)-1 {
+				out[len(out)-1] = v[i] // keep the outermost right/bottom line
+			}
+			continue
+		}
+		out = append(out, v[i])
+	}
+	return out
+}
+
 func gridFromRules(rs []rule) *tableCandidate {
 	var hs, vs []rule
 	var xs, ys []float64
@@ -225,8 +248,8 @@ func gridFromRules(rs []rule) *tableCandidate {
 	if len(hs) < 2 || len(vs) < 2 {
 		return nil
 	}
-	xs = clusterPositions(append(xs, bb.X0, bb.X1))
-	ys = clusterPositions(append(ys, bb.Y0, bb.Y1))
+	xs = collapseDoubleRules(clusterPositions(append(xs, bb.X0, bb.X1)))
+	ys = collapseDoubleRules(clusterPositions(append(ys, bb.Y0, bb.Y1)))
 	nr, nc := len(ys)-1, len(xs)-1
 	if nr < 1 || nc < 1 || nr*nc < 2 || nr > 500 || nc > 100 {
 		return nil

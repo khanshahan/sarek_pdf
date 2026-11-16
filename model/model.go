@@ -248,6 +248,13 @@ type Table struct {
 	ColX  []float64
 	RowY  []float64
 	Cells []*Cell
+	// Prev and Next link the parts of a table that continues across page
+	// boundaries (nil when the table is self-contained). Each part keeps
+	// its own page geometry; use Merged to obtain the whole table.
+	Prev, Next *Table
+	// HeaderRows is the number of leading rows of a continuation part that
+	// repeat the header of the first part (skipped by Merged).
+	HeaderRows int
 }
 
 // Bounds implements Block.

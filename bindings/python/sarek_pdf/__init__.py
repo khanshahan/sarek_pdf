@@ -163,6 +163,10 @@ class Document:
     def to_xml(self, pages: str = "", geometry: bool = True, embed_images: bool = False) -> str:
         return self._call("xml", pages=pages, geometry=geometry, embed_images=embed_images).decode()
 
+    def to_markdown(self, pages: str = "", embed_images: bool = False) -> str:
+        """GitHub-flavoured Markdown; tables continued across pages are merged."""
+        return self._call("markdown", pages=pages, embed_images=embed_images).decode()
+
     def to_docx(self, pages: str = "") -> bytes:
         return self._call("docx", pages=pages)
 

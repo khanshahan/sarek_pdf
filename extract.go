@@ -224,7 +224,7 @@ func (d *Document) Extract(ctx context.Context, pages ...int) (*model.Document, 
 					w, h, _ := d.PageSize(pages[i])
 					p = &model.Page{Number: pages[i], Width: w, Height: h}
 				}
-				out.Pages[i] = p
+				out.Pages[i] = clonePage(p)
 			}
 		}()
 	}
@@ -242,6 +242,7 @@ feed:
 		return nil, err
 	}
 	markHeadersFooters(out.Pages)
+	linkContinuedTables(out.Pages)
 	return out, errors.Join(errs...)
 }
 
@@ -306,6 +307,31 @@ func markHeadersFooters(pages []*model.Page) {
 			}
 		}
 	}
+}
+
+// clonePage returns a per-call copy of a cached page whose blocks can be
+// annotated (roles, table links) without affecting other callers. Only
+// the structs that document-level passes modify are copied; text and
+// geometry are shared read-only.
+func clonePage(p *model.Page) *model.Page {
+	if p == nil {
+		return nil
+	}
+	c := *p
+	c.Blocks = make([]model.Block, len(p.Blocks))
+	for i, b := range p.Blocks {
+		switch v := b.(type) {
+		case *model.Paragraph:
+			pc := *v
+			c.Blocks[i] = &pc
+		case *model.Table:
+			tc := *v
+			c.Blocks[i] = &tc
+		default:
+			c.Blocks[i] = b
+		}
+	}
+	return &c
 }
 
 // Text returns the full text of the given pages (all when none given).

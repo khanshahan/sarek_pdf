@@ -4,7 +4,8 @@
 // Mapping:
 //   - paragraphs → w:p with run formatting (font, size, bold, italic,
 //     colour) and Heading1–6 / ListParagraph styles
-//   - tables     → w:tbl with gridSpan / vMerge for merged cells
+//   - tables     → w:tbl with gridSpan / vMerge for merged cells; tables
+//     continued across pages are written once, merged
 //   - images     → inline pictures (JPEG/PNG)
 //   - drawings   → inline SVG pictures with a PNG fallback
 //   - pages      → page breaks; page size from the first page
@@ -181,7 +182,11 @@ func (x *writer) block(b model.Block) {
 		}
 		x.paragraph(v)
 	case *model.Table:
-		x.table(v)
+		// A table continued from the previous page was already written,
+		// merged, with its first part.
+		if v.Prev == nil {
+			x.table(v.Merged())
+		}
 	case *model.Image:
 		if !x.o.NoImages && (!v.OCRSource || x.o.KeepOCRImages) {
 			x.image(v)

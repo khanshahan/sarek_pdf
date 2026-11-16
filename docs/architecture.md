@@ -35,6 +35,7 @@ flowchart TB
         MODEL["model<br/>Document · Page · Block · Paragraph<br/>Table · Drawing · Image · Span · Source"]
         DOCX["export/docx"]
         XML["export/xmlexport"]
+        MD["export/markdown"]
     end
 
     subgraph Plug["Pluggable modules (interfaces)"]
@@ -62,10 +63,12 @@ flowchart TB
     CAPI --> ROOT
     CAPI --> DOCX
     CAPI --> XML
+    CAPI --> MD
 
     ROOT --> MODEL
     DOCX --> MODEL
     XML --> MODEL
+    MD --> MODEL
     ROOT --> OCRI
     ROOT --> CORR
     PADDLE -. implements .-> OCRI
@@ -94,7 +97,7 @@ flowchart TB
 | `internal/textnorm` | Deterministic normalisation tables (generated from the Unicode Character Database). |
 | `sarekpdf` (root) | Public API: opening, parallel extraction, page cache, search, headings, outline, highlighting, page extraction, OCR and correction orchestration. |
 | `model` | Plain-data result types shared by all exporters and bindings. |
-| `export/docx`, `export/xmlexport` | Writers for DOCX and XML. |
+| `export/docx`, `export/xmlexport`, `export/markdown` | Writers for DOCX, XML and Markdown. |
 | `ocr`, `ocr/paddle` | OCR module interface and the PaddleOCR/ONNX engine. |
 | `correct`, `correct/llm/...` | Correction interface, zero-hallucination guard and language-model engines. |
 | `capi`, `bindings/*`, `cmd/sarekpdf` | C ABI, Python and .NET bindings, command-line tool. |
@@ -139,6 +142,7 @@ sequenceDiagram
     end
     Pool-->>Doc: pages
     Doc->>Doc: mark running headers and footers
+    Doc->>Doc: link tables continued across pages
     Doc-->>App: *model.Document
 ```
 
@@ -295,9 +299,13 @@ classDiagram
         +Ruled bool
         +ColX, RowY []float64
         +Cells []*Cell
+        +Prev, Next *Table
+        +HeaderRows int
         +NumRows() int
         +NumCols() int
         +Grid() [][]string
+        +Rows() [][]string
+        +Merged() *Table
     }
     class Cell {
         +Row, Col, RowSpan, ColSpan int
@@ -350,6 +358,7 @@ classDiagram
     Block <|.. Drawing
     Block <|.. Image
     Table "1" *-- "n" Cell
+    Table --> Table : Next (continued on next page)
     Cell "1" *-- "n" Paragraph
     Paragraph "1" *-- "n" Line
     Drawing "1" *-- "n" Line : labels
@@ -358,6 +367,12 @@ classDiagram
 ```
 
 ### 3.3 Exporters
+
+Tables that continue across a page break are linked (`Table.Prev` / `Table.Next`)
+when the table ending one page and the table starting the next have the same columns
+and ruling; a repeated header row is recorded in `HeaderRows`. Each part keeps its own
+page geometry (XML reports the links as `continued-from-page` / `continues-on-page`);
+DOCX and Markdown write the whole table once via `Table.Merged()`.
 
 ```mermaid
 classDiagram
@@ -384,8 +399,22 @@ classDiagram
         +EmbedImages bool
         +Paths bool
     }
+    class markdown {
+        <<package export/markdown>>
+        +Write(w io.Writer, doc *model.Document, o Options) error
+        +DefaultOptions() Options
+    }
+    class mdOptions["markdown.Options"] {
+        +PageMarkers bool
+        +SkipHeadersFooters bool
+        +Assets func(name, data) (link, error)
+        +EmbedImages bool
+        +NoDrawings bool
+        +NoImages bool
+    }
     docx ..> docxOptions
     xmlexport ..> xmlOptions
+    markdown ..> mdOptions
 ```
 
 ---
@@ -518,7 +547,7 @@ sequenceDiagram
 | C function | Purpose |
 |---|---|
 | `sarek_open_file`, `sarek_open_bytes`, `sarek_open_url` | Open a document; return a handle. Options JSON: `password`, `workers`, `tables`, `drawings`, `images`, `ocr {models, lang, mode}`, `llm {url, model, concurrency}`. |
-| `sarek_call(handle, op, args_json, &out, &len, &err)` | Operations: `info`, `text`, `xml`, `docx`, `paragraphs`, `headings`, `search`, `highlight`, `extract_pages`. |
+| `sarek_call(handle, op, args_json, &out, &len, &err)` | Operations: `info`, `text`, `xml`, `docx`, `markdown`, `paragraphs`, `headings`, `search`, `highlight`, `extract_pages`. |
 | `sarek_close`, `sarek_free`, `sarek_version` | Release a handle, free returned buffers, report version. |
 
 All functions are thread-safe, convert panics into errors, and copy input buffers so

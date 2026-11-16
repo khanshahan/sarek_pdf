@@ -11,7 +11,7 @@
 //	      <original>…</original>    only when corrected
 //	      <line x y w h><span font size bold italic color x y w h>…</span></line>
 //	    </paragraph>
-//	    <table rows cols ruled x y w h>
+//	    <table rows cols ruled continued-from-page continues-on-page repeated-header-rows x y w h>
 //	      <cell row col rowspan colspan x y w h fill><paragraph/>…</cell>
 //	    </table>
 //	    <drawing x y w h><path d stroke fill stroke-width fill-rule/><label/></drawing>
@@ -52,14 +52,22 @@ type Options struct {
 func DefaultOptions() Options { return Options{Geometry: true, Paths: true} }
 
 type writer struct {
-	w   *bufio.Writer
-	o   Options
-	err error
+	w         *bufio.Writer
+	o         Options
+	err       error
+	tablePage map[*model.Table]int
 }
 
 // Write serialises doc to w.
 func Write(w io.Writer, doc *model.Document, o Options) error {
-	x := &writer{w: bufio.NewWriterSize(w, 1<<16), o: o}
+	x := &writer{w: bufio.NewWriterSize(w, 1<<16), o: o, tablePage: map[*model.Table]int{}}
+	for _, p := range doc.Pages {
+		for _, b := range p.Blocks {
+			if t, ok := b.(*model.Table); ok {
+				x.tablePage[t] = p.Number
+			}
+		}
+	}
 	x.raw(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
 	x.open("document", "xmlns", "urn:sarek-pdf:1", "version", doc.Version, "pages", strconv.Itoa(len(doc.Pages)))
 	x.metadata(doc.Metadata)
@@ -267,6 +275,15 @@ func (x *writer) line(l *model.Line, tag string) {
 func (x *writer) table(t *model.Table) {
 	attrs := []string{"rows", strconv.Itoa(t.NumRows()), "cols", strconv.Itoa(t.NumCols()),
 		"ruled", strconv.FormatBool(t.Ruled)}
+	if t.Prev != nil {
+		attrs = append(attrs, "continued-from-page", strconv.Itoa(x.tablePage[t.Prev]))
+		if t.HeaderRows > 0 {
+			attrs = append(attrs, "repeated-header-rows", strconv.Itoa(t.HeaderRows))
+		}
+	}
+	if t.Next != nil {
+		attrs = append(attrs, "continues-on-page", strconv.Itoa(x.tablePage[t.Next]))
+	}
 	x.open("table", append(attrs, box(t.BBox)...)...)
 	x.raw("\n")
 	for _, c := range t.Cells {

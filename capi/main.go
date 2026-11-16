@@ -30,6 +30,7 @@
 //	text        {"pages"}                           → UTF-8 text
 //	xml         {"pages","geometry","embed_images"} → XML
 //	docx        {"pages"}                           → DOCX bytes
+//	markdown    {"pages","embed_images"}            → Markdown (images as data URIs when embed_images)
 //	paragraphs  {"pages"}                           → JSON (with "source": "text-layer"|"ocr", "confidence")
 //	headings    {"pages"}                           → JSON
 //	search      {"query","regex","case_sensitive","whole_word","pages","max_results"} → JSON
@@ -60,6 +61,7 @@ import (
 	"github.com/khanshahan/sarek_pdf/correct/llm"
 	"github.com/khanshahan/sarek_pdf/correct/llm/openai"
 	"github.com/khanshahan/sarek_pdf/export/docx"
+	"github.com/khanshahan/sarek_pdf/export/markdown"
 	"github.com/khanshahan/sarek_pdf/export/xmlexport"
 	"github.com/khanshahan/sarek_pdf/model"
 	"github.com/khanshahan/sarek_pdf/ocr"
@@ -305,6 +307,16 @@ func call(doc *sarekpdf.Document, op string, a callArgs) ([]byte, error) {
 			return nil, err
 		}
 		return []byte(res.TextWithNotices()), err
+	case "markdown":
+		res, err := doc.Extract(ctx, pages...)
+		if res == nil {
+			return nil, err
+		}
+		o := markdown.DefaultOptions()
+		o.EmbedImages = a.EmbedImages
+		var buf bytes.Buffer
+		err = markdown.Write(&buf, res, o)
+		return buf.Bytes(), err
 	case "xml", "docx":
 		res, err := doc.Extract(ctx, pages...)
 		if res == nil {

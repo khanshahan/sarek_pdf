@@ -4,11 +4,12 @@ High-performance, dependency-free PDF extraction for Go, Python and .NET.
 
 * **Text, paragraphs, headings, lists** in reading order (1, 2, 3+ columns, RTL, CJK)
 * **OCR fallback** for scanned pages (pluggable engine; OCR text is always marked as OCR)
-* **Tables** with structure (ruled grids incl. merged cells, borderless and rule-delimited tables)
+* **Tables** with structure (ruled grids incl. merged cells, borderless and rule-delimited tables),
+  including tables **continued across pages** (linked, merged on export, repeated headers removed)
 * **Drawings** (vector paths → SVG / DOCX) and **images** (JPEG pass-through, PNG)
 * **Search** (plain / regex / whole-word) with match rectangles, **highlighting** (incremental update)
 * **Page extraction**, page count, metadata, outline/bookmarks
-* **Export** to **DOCX** and **XML**
+* **Export** to **DOCX**, **Markdown** and **XML**
 * PDF 1.0–2.0 structures: xref streams, object streams, hybrid files, broken-xref repair,
   encryption (RC4 40/128, AES-128, AES-256 R5/R6)
 * Optional, **constrained** language-model correction — off by default, with a guard that
@@ -71,7 +72,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Full structure (paragraphs, tables, drawings, images) and DOCX export.
+	// Full structure (paragraphs, tables, drawings, images); export to DOCX
+	// (markdown.Write works the same way for GitHub-flavoured Markdown).
 	res, err := doc.Extract(ctx)
 	if err != nil {
 		log.Fatal(err)
@@ -124,6 +126,7 @@ with Document.open("report.pdf") as doc:          # also Document.from_bytes(dat
     doc.highlight("revenue", "highlighted.pdf")
     doc.extract_pages("1-2", "first-two-pages.pdf")
     doc.save_docx("report.docx")
+    md = doc.to_markdown()                       # GitHub-flavoured Markdown
     xml = doc.to_xml()
 ```
 
@@ -135,6 +138,7 @@ A `Document` can be shared between threads.
 go install github.com/khanshahan/sarek_pdf/cmd/sarekpdf@latest
 sarekpdf info report.pdf
 sarekpdf convert -f docx -o report.docx report.pdf
+sarekpdf convert -f md   -o report.md   report.pdf          # images → report_assets/
 sarekpdf convert -f xml  -o report.xml  https://example.com/report.pdf
 sarekpdf search -q "revenue" report.pdf
 sarekpdf highlight -q "revenue" -o highlighted.pdf report.pdf
@@ -194,6 +198,7 @@ always labelled**:
 | Text | `[page N: text recognised by OCR (engine), mean confidence 99.2%; not from the PDF text layer]` |
 | XML | `<page ocr="true">`, `<ocr engine reason lines confidence/>`, `source="ocr" confidence="…"` on paragraphs and spans |
 | DOCX | "OCR Text" paragraph style (orange bar) and a Word comment per OCR page |
+| Markdown | a `> page N: text recognised by OCR …` notice before the page |
 | Search / JSON | `Match.Source`, `"source": "ocr"` |
 
 Scanned pages processed **without** an OCR engine are flagged `Page.NoTextLayer` and
