@@ -204,7 +204,11 @@ func (x *writer) block(b model.Block) {
 // formula writes a display formula as a centred native Word equation,
 // followed by its equation number.
 func (x *writer) formula(f *model.Formula) {
-	x.sb.WriteString(`<w:p><w:pPr><w:jc w:val="center"/></w:pPr><m:oMath>`)
+	style := ""
+	if f.Source == model.SourceOCR {
+		style = `<w:pStyle w:val="OCRText"/>`
+	}
+	x.sb.WriteString(`<w:p><w:pPr>` + style + `<w:jc w:val="center"/></w:pPr><m:oMath>`)
 	x.sb.WriteString(omml(f.Root))
 	x.sb.WriteString(`</m:oMath>`)
 	if f.Number != "" {

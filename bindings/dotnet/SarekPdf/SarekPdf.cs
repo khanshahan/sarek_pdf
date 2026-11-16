@@ -78,6 +78,8 @@ namespace SarekPdf
         [JsonPropertyName("models")] public string Models { get; set; } = "";
         [JsonPropertyName("lang")] public string Lang { get; set; } = "english";
         [JsonPropertyName("mode")] public string Mode { get; set; } = "auto";
+        /// <summary>Formula model directory: enables formula recognition in scanned pages.</summary>
+        [JsonPropertyName("formulas")] public string? Formulas { get; set; }
     }
 
     /// <summary>Search options.</summary>

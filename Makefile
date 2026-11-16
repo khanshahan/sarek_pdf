@@ -39,9 +39,10 @@ lib-ocr:
 cli-ocr:
 	$(ORT_ENV) $(GO) build -tags onnx -trimpath -o build/sarekpdf ./cmd/sarekpdf
 
-# Needs SAREK_OCR_MODELS and SAREK_SCAN (see ocr_onnx_test.go).
+# Needs SAREK_OCR_MODELS and SAREK_SCAN (see ocr_onnx_test.go); formula
+# tests need SAREK_MFR_DIR and SAREK_FORMULA_SCANS (formula_onnx_test.go).
 test-ocr:
-	$(ORT_ENV) $(GO) test -tags onnx -run OCR -v .
+	$(ORT_ENV) $(GO) test -tags onnx -v . ./ocr/... ./internal/ort/
 
 clean:
 	rm -rf build

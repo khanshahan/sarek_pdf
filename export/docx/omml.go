@@ -75,6 +75,16 @@ func writeOMML(sb *strings.Builder, n *model.MathNode) {
 		wrap("sub", child(n, 1))
 		wrap("sup", child(n, 2))
 		sb.WriteString("</m:sSubSup>")
+	case model.MathAccent:
+		if n.Text == "underline" {
+			sb.WriteString("<m:groupChr><m:groupChrPr><m:chr m:val=\"_\"/><m:pos m:val=\"bot\"/></m:groupChrPr>")
+			wrap("e", child(n, 0))
+			sb.WriteString("</m:groupChr>")
+			return
+		}
+		sb.WriteString(`<m:acc><m:accPr><m:chr m:val="` + esc(model.AccentChar(n.Text)) + `"/></m:accPr>`)
+		wrap("e", child(n, 0))
+		sb.WriteString("</m:acc>")
 	case model.MathUnderOver:
 		base, under, over := child(n, 0), child(n, 1), child(n, 2)
 		if base.Kind == model.MathOperator && len([]rune(base.Text)) == 1 {

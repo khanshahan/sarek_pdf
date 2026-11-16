@@ -3,6 +3,8 @@ package sarekpdf
 import (
 	"context"
 	"fmt"
+	"image"
+	"reflect"
 	"strings"
 
 	"github.com/khanshahan/sarek_pdf/internal/content"
@@ -15,7 +17,7 @@ import (
 // needOCR decides whether OCR should run on a page and returns the
 // reason ("" when it should not).
 func (d *Document) needOCR(res *content.Result) string {
-	if d.cfg.ocr == nil || d.cfg.ocrMode == ocr.Never || len(res.Images) == 0 {
+	if isNilEngine(d.cfg.ocr) && d.cfg.formulaOCR == nil || d.cfg.ocrMode == ocr.Never || len(res.Images) == 0 {
 		return ""
 	}
 	if d.cfg.ocrMode == ocr.Always {
@@ -57,15 +59,23 @@ func textLayerProblem(res *content.Result) string {
 	return ""
 }
 
-// runOCR recognises text in the page's images and maps it to display
-// coordinates.
-func (d *Document) runOCR(ctx context.Context, res *content.Result, reason string) ([]layout.OCRLine, *model.OCRInfo, map[*content.ImagePlacement]bool) {
-	info := &model.OCRInfo{Engine: d.cfg.ocr.Name(), Reason: reason}
+// runOCR recognises text (and, when configured, formulas) in the page's
+// images and maps the results to display coordinates.
+func (d *Document) runOCR(ctx context.Context, res *content.Result, reason string) ([]layout.OCRLine, []model.Block, *model.OCRInfo, map[*content.ImagePlacement]bool) {
+	var names []string
+	if !isNilEngine(d.cfg.ocr) {
+		names = append(names, d.cfg.ocr.Name())
+	}
+	if d.cfg.formulaOCR != nil {
+		names = append(names, d.cfg.formulaOCR.Name())
+	}
+	info := &model.OCRInfo{Engine: strings.Join(names, " + "), Reason: reason}
 	used := map[*content.ImagePlacement]bool{}
 	pageArea := res.Width * res.Height
 	var lines []layout.OCRLine
+	var blocks []model.Block
 	confSum := 0.0
-	dropped := 0
+	dropped, droppedFormulas := 0, 0
 	for i := range res.Images {
 		ip := &res.Images[i]
 		vis := ip.BBox.Intersect(model.Rect{X1: res.Width, Y1: res.Height})
@@ -77,25 +87,12 @@ func (d *Document) runOCR(ctx context.Context, res *content.Result, reason strin
 			info.Errors = append(info.Errors, fmt.Sprintf("image at %.0f,%.0f: %v", ip.BBox.X0, ip.BBox.Y0, err))
 			continue
 		}
-		rec, err := d.cfg.ocr.Recognize(ctx, img)
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil, info, used
-			}
-			info.Errors = append(info.Errors, fmt.Sprintf("ocr: %v", err))
-			continue
-		}
-		used[ip] = true
 		b := img.Bounds()
 		w, h := float64(b.Dx()), float64(b.Dy())
-		for _, l := range rec {
-			if l.Confidence < d.cfg.ocrMinConf {
-				dropped++
-				continue
-			}
+		toPage := func(q [4]image.Point) model.Rect {
 			var bb model.Rect
-			for k, q := range l.Quad {
-				p := ip.CTM.Apply(float64(q.X-b.Min.X)/w, 1-float64(q.Y-b.Min.Y)/h)
+			for k, pt := range q {
+				p := ip.CTM.Apply(float64(pt.X-b.Min.X)/w, 1-float64(pt.Y-b.Min.Y)/h)
 				r := model.Rect{X0: p.X, Y0: p.Y, X1: p.X, Y1: p.Y}
 				if k == 0 {
 					bb = r
@@ -103,9 +100,72 @@ func (d *Document) runOCR(ctx context.Context, res *content.Result, reason strin
 					bb = bb.Union(r)
 				}
 			}
-			lines = append(lines, layout.OCRLine{Text: l.Text, BBox: bb, Confidence: l.Confidence})
+			return bb
+		}
+		var imgLines []layout.OCRLine
+		if !isNilEngine(d.cfg.ocr) {
+			rec, err := d.cfg.ocr.Recognize(ctx, img)
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil, nil, info, used
+				}
+				info.Errors = append(info.Errors, fmt.Sprintf("ocr: %v", err))
+			}
+			for _, l := range rec {
+				if l.Confidence < d.cfg.ocrMinConf {
+					dropped++
+					continue
+				}
+				imgLines = append(imgLines, layout.OCRLine{Text: l.Text, BBox: toPage(l.Quad), Confidence: l.Confidence})
+			}
+			used[ip] = true
+		}
+		if d.cfg.formulaOCR != nil {
+			fs, err := d.cfg.formulaOCR.Formulas(ctx, img)
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil, nil, info, used
+				}
+				info.Errors = append(info.Errors, fmt.Sprintf("formula ocr: %v", err))
+			}
+			for _, f := range fs {
+				if !f.Display {
+					continue // inline math stays with the text OCR (more reliable)
+				}
+				if f.Confidence < d.cfg.formulaMin {
+					droppedFormulas++
+					continue // keep the text-OCR lines of this region
+				}
+				bb := toPage(f.Quad)
+				var numBox model.Rect
+				if f.Number != nil {
+					numBox = toPage(*f.Number)
+				}
+				number := ""
+				kept := imgLines[:0]
+				for _, l := range imgLines {
+					c := l.BBox.Center()
+					switch {
+					case f.Number != nil && numBox.Contains(c):
+						number = strings.TrimSpace(l.Text)
+					case bb.Contains(c) || l.BBox.Intersect(bb).Area() > 0.5*l.BBox.Area():
+						// replaced by the formula
+					default:
+						kept = append(kept, l)
+					}
+				}
+				imgLines = kept
+				raw := model.CompactLaTeX(f.LaTeX)
+				blocks = append(blocks, &model.Formula{BBox: bb.Union(numBox), Root: model.ParseLaTeX(raw), Raw: raw,
+					Number: number, Source: model.SourceOCR, Confidence: f.Confidence})
+				info.Formulas++
+			}
+			used[ip] = true
+		}
+		for _, l := range imgLines {
 			confSum += l.Confidence
 		}
+		lines = append(lines, imgLines...)
 	}
 	info.Lines = len(lines)
 	if len(lines) > 0 {
@@ -114,5 +174,17 @@ func (d *Document) runOCR(ctx context.Context, res *content.Result, reason strin
 	if dropped > 0 {
 		info.Errors = append(info.Errors, fmt.Sprintf("%d line(s) below confidence %.2f dropped", dropped, d.cfg.ocrMinConf))
 	}
-	return lines, info, used
+	if droppedFormulas > 0 {
+		info.Errors = append(info.Errors, fmt.Sprintf("%d formula(s) below confidence %.2f not used; their text OCR is kept", droppedFormulas, d.cfg.formulaMin))
+	}
+	return lines, blocks, info, used
+}
+
+// isNilEngine reports a missing text-OCR engine (including a typed nil).
+func isNilEngine(e ocr.Engine) bool {
+	if e == nil {
+		return true
+	}
+	v := reflect.ValueOf(e)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }

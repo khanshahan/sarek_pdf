@@ -175,3 +175,78 @@ func TestTextPageNotFlagged(t *testing.T) {
 		t.Fatal("scanned page must be flagged")
 	}
 }
+
+// fakeFormulas recognises one display formula with an equation number
+// and one low-confidence formula, in the 1000×1300 fake scan.
+type fakeFormulas struct{}
+
+func (fakeFormulas) Name() string { return "fake-math" }
+
+func (fakeFormulas) Formulas(context.Context, image.Image) ([]ocr.Formula, error) {
+	q := func(x0, y0, x1, y1 int) [4]image.Point {
+		return [4]image.Point{{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}
+	}
+	num := q(900, 600, 960, 640)
+	return []ocr.Formula{
+		{Quad: q(300, 590, 700, 660), LaTeX: `E = m c ^ { 2 }`, Confidence: 0.95, Display: true, Number: &num},
+		{Quad: q(300, 800, 700, 860), LaTeX: `\frac { a } { b }`, Confidence: 0.3, Display: true},
+		{Quad: q(100, 250, 200, 280), LaTeX: `x`, Confidence: 0.99, Display: false},
+	}, nil
+}
+
+// fakeOCRWithMath returns text lines, including garbage OCR of the
+// formula regions, as a text recogniser would.
+type fakeOCRWithMath struct{ fakeOCR }
+
+func (f *fakeOCRWithMath) Recognize(ctx context.Context, img image.Image) ([]ocr.Line, error) {
+	lines, _ := f.fakeOCR.Recognize(ctx, img)
+	q := func(x0, y0, x1, y1 int) [4]image.Point {
+		return [4]image.Point{{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}
+	}
+	return append(lines,
+		ocr.Line{Text: "E=mc2", Quad: q(320, 600, 680, 650), Confidence: 0.8},
+		ocr.Line{Text: "(1)", Quad: q(905, 605, 955, 635), Confidence: 0.9},
+		ocr.Line{Text: "a b", Quad: q(320, 810, 680, 850), Confidence: 0.7},
+	), nil
+}
+
+func TestFormulaOCR(t *testing.T) {
+	doc, err := OpenBytes(scannedPDF(), WithOCR(&fakeOCRWithMath{}, ocr.Auto), WithFormulaOCR(fakeFormulas{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := doc.Extract(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pg := res.Pages[0]
+	fs := formulasOf(pg)
+	if len(fs) != 1 {
+		t.Fatalf("formulas = %d", len(fs))
+	}
+	f := fs[0]
+	if f.Source != model.SourceOCR || f.Confidence != 0.95 || f.Number != "(1)" {
+		t.Errorf("formula = %+v", f)
+	}
+	if f.LaTeX() != `E=mc^{2}` || !strings.Contains(f.MathML(), "<msup>") {
+		t.Errorf("latex = %q mathml = %s", f.LaTeX(), f.MathML())
+	}
+	text := pg.Text()
+	if strings.Contains(text, "E=mc2") || strings.Contains(text, "\n(1)") {
+		t.Errorf("formula region text not replaced:\n%s", text)
+	}
+	if !strings.Contains(text, "a b") {
+		t.Errorf("low-confidence formula region must keep its OCR text:\n%s", text)
+	}
+	if pg.OCR.Formulas != 1 || !strings.Contains(strings.Join(pg.OCR.Errors, ";"), "1 formula(s) below confidence") {
+		t.Errorf("ocr info = %+v", pg.OCR)
+	}
+	if !strings.Contains(pg.OCR.Engine, "fake-math") {
+		t.Errorf("engine = %q", pg.OCR.Engine)
+	}
+	var xb bytes.Buffer
+	xmlexport.Write(&xb, res, xmlexport.DefaultOptions())
+	if !strings.Contains(xb.String(), `source="ocr" confidence="0.950"`) {
+		t.Error("xml formula not marked as OCR")
+	}
+}

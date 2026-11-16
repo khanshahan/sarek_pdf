@@ -28,6 +28,7 @@ import (
 	"github.com/khanshahan/sarek_pdf/export/xmlexport"
 	"github.com/khanshahan/sarek_pdf/model"
 	"github.com/khanshahan/sarek_pdf/ocr"
+	"github.com/khanshahan/sarek_pdf/ocr/mathocr"
 	"github.com/khanshahan/sarek_pdf/ocr/paddle"
 )
 
@@ -71,6 +72,7 @@ func main() {
 	ocrModels := fs.String("ocr-models", "", "OCR fallback: PaddleOCR ONNX model directory (binary built with -tags onnx)")
 	ocrLang := fs.String("ocr-lang", "english", "OCR recognition model: english, latin, eslav, greek, korean, chinese, …")
 	ocrModeF := fs.String("ocr-mode", "auto", "OCR mode: auto (pages without text layer), always, never")
+	formulaModels := fs.String("formula-models", "", "formula recognition in page images: directory with layout.onnx, encoder_model.onnx, decoder_model.onnx, tokenizer.json (binary built with -tags onnx)")
 	fs.Parse(os.Args[2:])
 	if fs.NArg() != 1 {
 		usage()
@@ -88,12 +90,21 @@ func main() {
 	if *llmURL != "" {
 		opts = append(opts, sarekpdf.WithCorrector(&llm.Corrector{Engine: openai.New(*llmURL, *llmModel), Concurrency: *llmConc}))
 	}
+	mode := map[string]ocr.Mode{"auto": ocr.Auto, "always": ocr.Always, "never": ocr.Never}[*ocrModeF]
 	if *ocrModels != "" {
 		eng, err := paddle.New(paddle.FromDir(*ocrModels, *ocrLang))
 		check(err)
 		defer eng.Close()
-		mode := map[string]ocr.Mode{"auto": ocr.Auto, "always": ocr.Always, "never": ocr.Never}[*ocrModeF]
 		opts = append(opts, sarekpdf.WithOCR(eng, mode))
+	}
+	if *formulaModels != "" {
+		eng, err := mathocr.New(mathocr.FromDir(*formulaModels))
+		check(err)
+		defer eng.Close()
+		opts = append(opts, sarekpdf.WithFormulaOCR(eng))
+		if *ocrModels == "" {
+			opts = append(opts, sarekpdf.WithOCR(nil, mode))
+		}
 	}
 	start := time.Now()
 	var doc *sarekpdf.Document

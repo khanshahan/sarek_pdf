@@ -386,6 +386,7 @@ type OCRInfo struct {
 	// Reason is why OCR ran: "no-text-layer", "unmapped-text" or "forced".
 	Reason     string
 	Lines      int     // recognised lines
+	Formulas   int     // formulas recognised by the formula engine
 	Confidence float64 // mean line confidence in [0,1]
 	// Errors lists images that could not be decoded or recognised.
 	Errors []string
@@ -484,7 +485,7 @@ func (p *Page) OCRNotice() string {
 	if p.NoTextLayer {
 		return fmt.Sprintf("[page %d: no usable text layer (scanned page); enable OCR to recognise its images]", p.Number)
 	}
-	if p.OCR == nil || p.OCR.Lines == 0 {
+	if p.OCR == nil || p.OCR.Lines == 0 && p.OCR.Formulas == 0 {
 		return ""
 	}
 	return fmt.Sprintf("[page %d: text recognised by OCR (%s), mean confidence %.1f%%; not from the PDF text layer]",

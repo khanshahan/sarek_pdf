@@ -89,7 +89,9 @@ class Document:
         """Open a file path, or an http(s) URL.
 
         ocr enables the OCR fallback, e.g. {"models": "/path/to/paddleocr-onnx",
-        "lang": "english", "mode": "auto"} (native library built with -tags onnx).
+        "lang": "english", "mode": "auto", "formulas": "/path/to/formula-models"}
+        (native library built with -tags onnx). "formulas" adds formula
+        recognition for scanned pages.
         OCR text is marked: paragraphs carry "source": "ocr" and a confidence,
         and text() prefixes OCR pages with a notice line.
         """

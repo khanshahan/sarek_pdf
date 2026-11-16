@@ -193,8 +193,48 @@ On "Attention Is All You Need" (arXiv:1706.03762) all six displayed formulas and
 fractions/roots are recovered, e.g. `\mathrm{Attention}(Q,K,V) = \mathrm{softmax}(\frac{QK^{T}}{\sqrt{d_{k}}})V`.
 No formulas were reported on the 1,800 non-mathematical test documents.
 
-Limits: formulas in scanned images need an image-based recogniser (not included); matrices and
-multi-line alignments are output row by row; a line that starts with prose ("where …") stays text.
+Limits: matrices and multi-line alignments are output row by row; a line that starts with prose
+("where …") stays text.
+
+### Formulas in scanned pages
+
+Formulas in page images are recognised by a pluggable `ocr.FormulaEngine`. The included engine
+(`ocr/mathocr`, build tag `onnx`) runs **PP-DocLayoutV3** (Apache-2.0) to find formula regions and
+**Pix2Text-MFR 1.5** (MIT) to transcribe them into LaTeX, on ONNX Runtime (MIT).
+
+```bash
+mkdir formula-models && cd formula-models
+curl -L -o layout.onnx https://huggingface.co/alex-dinh/PP-DocLayoutV3-ONNX/resolve/main/PP-DocLayoutV3.onnx
+for f in encoder_model.onnx decoder_model.onnx tokenizer.json; do
+  curl -L -O https://huggingface.co/breezedeus/pix2text-mfr-1.5/resolve/main/$f
+done
+cd .. && make cli-ocr ORT_DIR=/path/to/onnxruntime
+build/sarekpdf convert -f md -o out.md -ocr-models /path/to/paddleocr-onnx -formula-models formula-models scan.pdf
+```
+
+```go
+mathEng, _ := mathocr.New(mathocr.FromDir("formula-models"))
+doc, _ := sarekpdf.Open("scan.pdf", sarekpdf.WithOCR(textEng, ocr.Auto), sarekpdf.WithFormulaOCR(mathEng))
+```
+
+```python
+doc = Document.open("scan.pdf", ocr={"models": "paddleocr-onnx", "formulas": "formula-models"})
+```
+
+Recognition models can be wrong, so their output is handled conservatively:
+
+* every recognised formula is `Source = OCR` with a `Confidence`, and its LaTeX is kept verbatim
+  (`Formula.Raw`, whitespace-normalised only); XML marks it `source="ocr"`, Markdown adds a
+  comment with the confidence, DOCX uses the "OCR Text" style;
+* formulas below `WithFormulaMinConfidence` (default 0.6) are not used — the text OCR of that
+  region is kept and the drop is reported in `Page.OCR.Errors`;
+* only displayed formulas are taken from the formula engine; inline math in scanned text stays
+  with the text OCR;
+* the text-OCR lines a formula covers are replaced (no duplicates); its equation number comes from
+  the text OCR.
+
+On a 200 dpi scan of the paper's pages 4–5, all four displayed formulas were recognised exactly,
+with equation numbers (1) and (2), at ≈ 4–5 s per page on CPU (text and formula OCR together).
 
 ## OCR fallback for scanned pages
 

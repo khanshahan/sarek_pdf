@@ -114,6 +114,9 @@ func (x *writer) block(p *model.Page, b model.Block) {
 		if v.Number != "" {
 			tag = ` \tag{` + strings.Trim(v.Number, "()") + `}`
 		}
+		if v.Source == model.SourceOCR {
+			x.printf("<!-- formula recognised by OCR, confidence %.2f -->\n", v.Confidence)
+		}
 		x.printf("$$\n%s%s\n$$\n\n", v.LaTeX(), tag)
 	}
 }

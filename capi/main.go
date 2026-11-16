@@ -21,7 +21,10 @@
 //
 // Open options (JSON): {"password","workers","tables","drawings","images",
 // "llm": {"url","model","concurrency"},
-// "ocr": {"models": "<dir>", "lang": "english", "mode": "auto|always|never"}}
+// "ocr": {"models": "<dir>", "lang": "english", "mode": "auto|always|never",
+//
+//	"formulas": "<formula model dir>"}}
+//
 // OCR requires a library built with -tags onnx.
 //
 // Operations for sarek_call (args are JSON objects):
@@ -66,6 +69,7 @@ import (
 	"github.com/khanshahan/sarek_pdf/export/xmlexport"
 	"github.com/khanshahan/sarek_pdf/model"
 	"github.com/khanshahan/sarek_pdf/ocr"
+	"github.com/khanshahan/sarek_pdf/ocr/mathocr"
 	"github.com/khanshahan/sarek_pdf/ocr/paddle"
 )
 
@@ -88,6 +92,9 @@ type openOptions struct {
 		Models string `json:"models"`
 		Lang   string `json:"lang"`
 		Mode   string `json:"mode"`
+		// Formulas: directory of the formula models (layout.onnx,
+		// encoder_model.onnx, decoder_model.onnx, tokenizer.json).
+		Formulas string `json:"formulas"`
 	} `json:"ocr"`
 	LLM *struct {
 		URL         string `json:"url"`
@@ -118,6 +125,22 @@ func ocrEngine(dir, lang string) (*paddle.Engine, error) {
 	return e, nil
 }
 
+var formulaEngines = map[string]*mathocr.Engine{}
+
+func formulaEngine(dir string) (*mathocr.Engine, error) {
+	ocrMu.Lock()
+	defer ocrMu.Unlock()
+	if e := formulaEngines[dir]; e != nil {
+		return e, nil
+	}
+	e, err := mathocr.New(mathocr.FromDir(dir))
+	if err != nil {
+		return nil, err
+	}
+	formulaEngines[dir] = e
+	return e, nil
+}
+
 func (o openOptions) toOptions() ([]sarekpdf.Option, error) {
 	opts := []sarekpdf.Option{sarekpdf.WithPassword(o.Password), sarekpdf.WithWorkers(o.Workers)}
 	if o.Tables != nil {
@@ -133,13 +156,26 @@ func (o openOptions) toOptions() ([]sarekpdf.Option, error) {
 		opts = append(opts, sarekpdf.WithCorrector(&llm.Corrector{
 			Engine: openai.New(o.LLM.URL, o.LLM.Model), Concurrency: max(1, o.LLM.Concurrency)}))
 	}
-	if o.OCR != nil && o.OCR.Models != "" {
-		eng, err := ocrEngine(o.OCR.Models, o.OCR.Lang)
-		if err != nil {
-			return nil, err
-		}
+	if o.OCR != nil {
 		mode := map[string]ocr.Mode{"": ocr.Auto, "auto": ocr.Auto, "always": ocr.Always, "never": ocr.Never}[o.OCR.Mode]
-		opts = append(opts, sarekpdf.WithOCR(eng, mode))
+		var textEng ocr.Engine
+		if o.OCR.Models != "" {
+			eng, err := ocrEngine(o.OCR.Models, o.OCR.Lang)
+			if err != nil {
+				return nil, err
+			}
+			textEng = eng
+		}
+		if textEng != nil || o.OCR.Formulas != "" {
+			opts = append(opts, sarekpdf.WithOCR(textEng, mode))
+		}
+		if o.OCR.Formulas != "" {
+			eng, err := formulaEngine(o.OCR.Formulas)
+			if err != nil {
+				return nil, err
+			}
+			opts = append(opts, sarekpdf.WithFormulaOCR(eng))
+		}
 	}
 	return opts, nil
 }
@@ -367,7 +403,7 @@ func call(doc *sarekpdf.Document, op string, a callArgs) ([]byte, error) {
 			LaTeX  string   `json:"latex"`
 			MathML string   `json:"mathml"`
 			Text   string   `json:"text"`
-			Number string   `json:"number,omitempty"`
+			Number string   `json:"number"`
 			BBox   jsonRect `json:"bbox"`
 		}
 		out := []jf{}

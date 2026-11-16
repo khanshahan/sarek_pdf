@@ -232,7 +232,20 @@ func detectFormulas(frags []*frag, glyphs []content.Glyph, paths []model.Path, u
 	}
 	var out []model.Block
 	var inline []*frag
+	// Deterministic order (top to bottom, left to right): processing one
+	// group can split prose fragments that later groups must see.
+	ordered := make([][]*fitem, 0, len(groups))
 	for _, g := range groups {
+		ordered = append(ordered, g)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		a, b := groupBox(ordered[i]), groupBox(ordered[j])
+		if a.Y0 != b.Y0 {
+			return a.Y0 < b.Y0
+		}
+		return a.X0 < b.X0
+	})
+	for _, g := range ordered {
 		hasSeed := false
 		for _, it := range g {
 			if it.f != nil {
@@ -263,7 +276,9 @@ func detectFormulas(frags []*frag, glyphs []content.Glyph, paths []model.Path, u
 		}
 		// 3. Split into formulas per row unless joined by a fraction bar.
 		for _, part := range splitRows(g) {
-			if f := makeFormula(part, frags, glyphs, used); f != nil {
+			// Fragments created so far (split prose, inline formulas) count
+			// as text on their rows too.
+			if f := makeFormula(part, append(append([]*frag(nil), frags...), inline...), glyphs, used); f != nil {
 				out = append(out, f)
 			} else if frs := inlineFormula(withoutCompleted(part, completed), items, glyphs, used); frs != nil {
 				inline = append(inline, frs...)
@@ -576,11 +591,14 @@ func makeFormula(g []*fitem, frags []*frag, glyphs []content.Glyph, used map[int
 	number := ""
 	var numFrag *frag
 	for _, f := range frags {
-		if f.used || member[f] || !sameRow(f.bbox, bb) && !sameRow(bb, f.bbox) {
+		if f.used || member[f] {
 			continue
 		}
+		// Any substantial overlap counts: a group may hold only part of a
+		// fraction (its numerator can sit inside the prose line), and
+		// displayed formulas are separated from text lines by space.
 		ov := min(f.bbox.Y1, bb.Y1) - max(f.bbox.Y0, bb.Y0)
-		if ov <= 0.5*min(f.bbox.H(), bb.H()) {
+		if ov <= 0.3*min(f.bbox.H(), bb.H()) {
 			continue
 		}
 		if t := strings.TrimSpace(f.text()); eqNumberRe.MatchString(t) && f.bbox.X0 > bb.X1 {

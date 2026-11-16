@@ -14,15 +14,26 @@ type Formula struct {
 	Root *MathNode
 	// Number is an equation number printed beside the formula, e.g. "(3)".
 	Number string
-	Source Source
+	// Source is SourceOCR when the formula was recognised from an image;
+	// Confidence is then the recogniser's confidence in [0,1] and Raw
+	// holds its LaTeX output verbatim.
+	Source     Source
+	Confidence float64
+	Raw        string
 }
 
 // Bounds implements Block.
 func (f *Formula) Bounds() Rect { return f.BBox }
 func (*Formula) isBlock()       {}
 
-// LaTeX returns the formula as LaTeX math (without delimiters).
-func (f *Formula) LaTeX() string { return f.Root.LaTeX() }
+// LaTeX returns the formula as LaTeX math (without delimiters). For
+// formulas recognised from images it is the recogniser's output verbatim.
+func (f *Formula) LaTeX() string {
+	if f.Raw != "" {
+		return f.Raw
+	}
+	return f.Root.LaTeX()
+}
 
 // MathML returns the formula as a MathML <math> element.
 func (f *Formula) MathML() string {
@@ -53,7 +64,16 @@ const (
 	MathSub                       // Children: base, subscript
 	MathSubSup                    // Children: base, subscript, superscript
 	MathUnderOver                 // Children: base (large operator), under, over (may be empty rows)
+	MathAccent                    // Children: base; Text: accent command (hat, bar, vec, tilde, dot, ddot, ...)
 )
+
+// accentChars maps accent commands to the combining mark used in MathML/OMML.
+var accentChars = map[string]string{"hat": "^", "widehat": "^", "bar": "¯", "overline": "¯", "vec": "→",
+	"overrightarrow": "→", "tilde": "~", "widetilde": "~", "dot": "˙", "ddot": "¨", "check": "ˇ",
+	"breve": "˘", "acute": "´", "grave": "`", "underline": "_"}
+
+// AccentChar returns the display character of an accent command.
+func AccentChar(cmd string) string { return accentChars[cmd] }
 
 // MathNode is a node of a formula tree.
 type MathNode struct {
@@ -176,6 +196,8 @@ func (n *MathNode) LaTeX() string {
 			s += `^` + group(o)
 		}
 		return s
+	case MathAccent:
+		return `\` + n.Text + group(n.child(0).LaTeX())
 	}
 	return ""
 }
@@ -260,6 +282,11 @@ func (n *MathNode) MathML() string {
 		return "<msubsup>" + n.child(0).MathML() + n.child(1).MathML() + n.child(2).MathML() + "</msubsup>"
 	case MathUnderOver:
 		return "<munderover>" + n.child(0).MathML() + n.child(1).MathML() + n.child(2).MathML() + "</munderover>"
+	case MathAccent:
+		if n.Text == "underline" {
+			return "<munder>" + n.child(0).MathML() + "<mo>_</mo></munder>"
+		}
+		return `<mover accent="true">` + n.child(0).MathML() + "<mo>" + xmlEsc(AccentChar(n.Text)) + "</mo></mover>"
 	}
 	return "<mrow/>"
 }
@@ -268,10 +295,32 @@ func (n *MathNode) MathML() string {
 // Linear text
 
 func paren(s string) string {
-	if len([]rune(s)) <= 1 || isSimple(s) {
+	if len([]rune(s)) <= 1 || isSimple(s) || isOneGroup(s) {
 		return s
 	}
 	return "(" + s + ")"
+}
+
+// isOneGroup reports text that is already one bracketed unit: "(…)" or
+// "√(…)" whose opening parenthesis closes at the very end.
+func isOneGroup(s string) bool {
+	t := strings.TrimPrefix(s, "√")
+	if !strings.HasPrefix(t, "(") || !strings.HasSuffix(t, ")") {
+		return false
+	}
+	depth := 0
+	for i, r := range t {
+		switch r {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 && i != len(t)-1 {
+				return false
+			}
+		}
+	}
+	return depth == 0
 }
 
 func isSimple(s string) bool {
@@ -322,6 +371,8 @@ func (n *MathNode) Linear() string {
 			s += "^" + paren(o)
 		}
 		return s
+	case MathAccent:
+		return n.Text + "(" + n.child(0).Linear() + ")"
 	}
 	return ""
 }

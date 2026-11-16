@@ -58,12 +58,14 @@ type config struct {
 	ocr           ocr.Engine
 	ocrMode       ocr.Mode
 	ocrMinConf    float64
+	formulaOCR    ocr.FormulaEngine
+	formulaMin    float64
 }
 
 func defaults() config {
 	return config{
 		workers: runtime.GOMAXPROCS(0), tables: true, drawings: true, images: true,
-		imageData: true, cachePages: true, maxSize: 2 << 30, rules: true, ocrMinConf: 0.5,
+		imageData: true, cachePages: true, maxSize: 2 << 30, rules: true, ocrMinConf: 0.5, formulaMin: 0.6,
 		httpClient: &http.Client{Timeout: 10 * time.Minute},
 	}
 }
@@ -96,6 +98,17 @@ func WithCorrectTables(on bool) Option { return func(c *config) { c.correctTable
 func WithOCR(e ocr.Engine, mode ocr.Mode) Option {
 	return func(c *config) { c.ocr, c.ocrMode = e, mode }
 }
+
+// WithFormulaOCR enables formula recognition in page images (scanned
+// pages; with ocr.Always also images on other pages). Displayed formulas
+// become model.Formula blocks marked SourceOCR with the engine's
+// confidence and verbatim LaTeX; the text-OCR lines they cover are
+// replaced. Formulas in the PDF text layer never need this.
+func WithFormulaOCR(e ocr.FormulaEngine) Option { return func(c *config) { c.formulaOCR = e } }
+
+// WithFormulaMinConfidence drops recognised formulas below v (default
+// 0.6); their region keeps its text-OCR lines and the drop is reported.
+func WithFormulaMinConfidence(v float64) Option { return func(c *config) { c.formulaMin = v } }
 
 // WithOCRMinConfidence drops OCR lines whose confidence is below v
 // (default 0.5). Dropped lines are counted in Page.OCR.Errors.

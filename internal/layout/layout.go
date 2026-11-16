@@ -17,6 +17,9 @@ type Options struct {
 	// OCR holds text lines recognised from page images. They are laid out
 	// together with text-layer text and marked as model.SourceOCR.
 	OCR []OCRLine
+	// Blocks are prebuilt blocks (e.g. formulas recognised in page images)
+	// placed in reading order with the rest of the page.
+	Blocks []model.Block
 }
 
 // OCRLine is a recognised line in display coordinates.
@@ -131,6 +134,7 @@ func Analyze(res *content.Result, images []*model.Image, opts Options) []model.B
 	}
 
 	// Display formulas (before drawings, so fraction bars stay with them).
+	blocks = append(blocks, opts.Blocks...)
 	formulas, inlineMath := detectFormulas(frags, res.Glyphs, res.Paths, usedPaths, page)
 	blocks = append(blocks, formulas...)
 	frags = append(frags, inlineMath...)

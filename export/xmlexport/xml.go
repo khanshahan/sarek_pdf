@@ -385,6 +385,9 @@ func (x *writer) formula(f *model.Formula) {
 	if f.Number != "" {
 		attrs = append(attrs, "number", f.Number)
 	}
+	if f.Source == model.SourceOCR {
+		attrs = append(attrs, "source", "ocr", "confidence", strconv.FormatFloat(f.Confidence, 'f', 3, 64))
+	}
 	x.open("formula", append(attrs, box(f.BBox)...)...)
 	x.elem("latex", f.LaTeX())
 	x.elem("text", f.Text())

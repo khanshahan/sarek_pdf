@@ -97,4 +97,7 @@ authorization of the copyright holder.
 * **PaddleOCR PP-OCR models** (Apache-2.0) — used by the OCR engine at runtime, never
   shipped in this repository. If you redistribute them, include the Apache-2.0
   license text and any NOTICE file.
+* **PP-DocLayoutV3** (Apache-2.0, PaddlePaddle; ONNX conversion by a third party) and
+  **Pix2Text-MFR 1.5** (MIT, breezedeus) — used by the optional formula engine at runtime, never
+  shipped in this repository. Include their license texts if you redistribute them.
 * **Model weights** are never shipped. Check the license of any model you use.

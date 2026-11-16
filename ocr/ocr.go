@@ -52,3 +52,29 @@ const (
 	// Never disables OCR even when an engine is configured.
 	Never
 )
+
+// Formula is a mathematical formula recognised in an image.
+type Formula struct {
+	// Quad holds the corners in pixels (top-left, top-right, bottom-right,
+	// bottom-left).
+	Quad [4]image.Point
+	// LaTeX is the recogniser's output.
+	LaTeX string
+	// Confidence is in [0,1].
+	Confidence float64
+	// Display is true for a formula set on its own line, false for a
+	// formula inside a line of text.
+	Display bool
+	// Number, when non-nil, is the region of the formula's equation
+	// number (its text comes from OCR).
+	Number *[4]image.Point
+}
+
+// FormulaEngine finds and recognises formulas in images, e.g. scanned
+// pages. Implementations must be safe for concurrent use. Recognition
+// models can be wrong: results are always marked as OCR with their
+// confidence, and the model's LaTeX is kept verbatim.
+type FormulaEngine interface {
+	Formulas(ctx context.Context, img image.Image) ([]Formula, error)
+	Name() string
+}

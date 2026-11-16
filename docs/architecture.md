@@ -41,6 +41,7 @@ flowchart TB
     subgraph Plug["Pluggable modules (interfaces)"]
         OCRI["ocr<br/>Engine interface · Mode"]
         PADDLE["ocr/paddle<br/>PaddleOCR on ONNX Runtime<br/>(build tag onnx)"]
+        MATHOCR["ocr/mathocr<br/>PP-DocLayoutV3 + Pix2Text-MFR<br/>formulas in images (build tag onnx)"]
         CORR["correct<br/>Corrector · Verify · Rules"]
         LLM["correct/llm<br/>Engine interface · Corrector"]
         OAI["correct/llm/openai<br/>OpenAI-compatible HTTP"]
@@ -54,6 +55,7 @@ flowchart TB
         IMAGES["images<br/>JPEG/PNG export · CCITT G3/G4<br/>rasterise for OCR"]
         TEXTNORM["textnorm<br/>ligatures · CJK/Arabic<br/>compatibility forms"]
         PDF["pdf<br/>lexer · parser · xref/objstm · repair<br/>filters · RC4/AES · writer"]
+        ORT["ort<br/>ONNX Runtime binding<br/>(build tag onnx)"]
     end
 
     GOAPP --> ROOT
@@ -72,6 +74,7 @@ flowchart TB
     ROOT --> OCRI
     ROOT --> CORR
     PADDLE -. implements .-> OCRI
+    MATHOCR -. implements .-> OCRI
     LLM -. implements .-> CORR
     OAI -. implements .-> LLM
     LCPP -. implements .-> LLM
@@ -85,6 +88,7 @@ flowchart TB
     CONTENT --> PDF
     FONT --> PDF
     IMAGES --> PDF
+    MATHOCR --> ORT
 ```
 
 | Package | Responsibility |
@@ -98,7 +102,8 @@ flowchart TB
 | `sarekpdf` (root) | Public API: opening, parallel extraction, page cache, search, headings, outline, highlighting, page extraction, OCR and correction orchestration. |
 | `model` | Plain-data result types shared by all exporters and bindings. |
 | `export/docx`, `export/xmlexport`, `export/markdown` | Writers for DOCX, XML and Markdown. |
-| `ocr`, `ocr/paddle` | OCR module interface and the PaddleOCR/ONNX engine. |
+| `ocr`, `ocr/paddle`, `ocr/mathocr` | OCR module interfaces (`Engine` for text, `FormulaEngine` for formulas in images) and their ONNX engines. |
+| `internal/ort` | Minimal ONNX Runtime binding for multi-input models (build tag `onnx`). |
 | `correct`, `correct/llm/...` | Correction interface, zero-hallucination guard and language-model engines. |
 | `capi`, `bindings/*`, `cmd/sarekpdf` | C ABI, Python and .NET bindings, command-line tool. |
 
@@ -328,6 +333,9 @@ classDiagram
         +BBox Rect
         +Root *MathNode
         +Number string
+        +Source Source
+        +Confidence float64
+        +Raw string
         +LaTeX() string
         +MathML() string
         +Text() string
@@ -459,6 +467,25 @@ classDiagram
         +Quad [4]image.Point
         +Confidence float64
     }
+    class FormulaEngine["ocr.FormulaEngine"] {
+        <<interface>>
+        +Formulas(ctx, img image.Image) ([]ocr.Formula, error)
+        +Name() string
+    }
+    class OCRFormula["ocr.Formula"] {
+        +Quad [4]image.Point
+        +LaTeX string
+        +Confidence float64
+        +Display bool
+        +Number *[4]image.Point
+    }
+    class MathOCR["mathocr.Engine"] {
+        +New(mathocr.Options) (*Engine, error)
+        +FromDir(dir string) Options
+        +Close()
+    }
+    FormulaEngine <|.. MathOCR
+    FormulaEngine ..> OCRFormula
     class OCRMode["ocr.Mode"] {
         <<enum>>
         Auto
@@ -513,6 +540,7 @@ Guarantees enforced by the library, independent of the engine:
 
 | Module | Guarantee |
 |---|---|
+| Formula OCR | Runs only when configured (`WithFormulaOCR`) on OCR'd page images. Only displayed formulas are used; each is `Source = OCR` with a confidence and verbatim LaTeX; formulas below `WithFormulaMinConfidence` are dropped and their text OCR kept. |
 | OCR | Runs only when configured (`WithOCR`). In `Auto` mode only on pages without a usable text layer. Every OCR span has `Source = SourceOCR` and a confidence; lines below `WithOCRMinConfidence` are dropped and reported; `Page.OCR` records engine, reason and mean confidence; exporters label OCR text. |
 | Language model | Off by default. A proposal is accepted only if `correct.Verify` proves it is a local extraction repair (merge/split words, case, diacritics, hyphens, ligatures, `rn↔m`, `cl↔d`, `vv↔w`, `I↔l`; identical digits; no added, removed or reordered words). The original text is kept in `Paragraph.Original`. |
 

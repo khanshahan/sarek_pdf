@@ -72,7 +72,7 @@ func (d *Document) extractPage(ctx context.Context, n int) (pg *model.Page, err 
 	var ocrInfo *model.OCRInfo
 	if reason := d.needOCR(res); reason != "" {
 		var used map[*content.ImagePlacement]bool
-		lopts.OCR, ocrInfo, used = d.runOCR(ctx, res, reason)
+		lopts.OCR, lopts.Blocks, ocrInfo, used = d.runOCR(ctx, res, reason)
 		for i, ip := range res.Images {
 			if used[&res.Images[i]] {
 				for _, im := range imgs {
