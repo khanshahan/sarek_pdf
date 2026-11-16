@@ -155,6 +155,10 @@ class Document:
     def headings(self, pages: str = "") -> List[Dict[str, Any]]:
         return json.loads(self._call("headings", pages=pages))
 
+    def formulas(self, pages: str = "") -> List[Dict[str, Any]]:
+        """Display formulas: {"page", "latex", "mathml", "text", "number", "bbox"}."""
+        return json.loads(self._call("formulas", pages=pages))
+
     def search(self, query: str, *, regex: bool = False, case_sensitive: bool = False,
                whole_word: bool = False, pages: str = "", max_results: int = 0) -> List[Dict[str, Any]]:
         return json.loads(self._call("search", query=query, regex=regex, case_sensitive=case_sensitive,

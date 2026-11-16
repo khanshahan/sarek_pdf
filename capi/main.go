@@ -33,6 +33,7 @@
 //	markdown    {"pages","embed_images"}            → Markdown (images as data URIs when embed_images)
 //	paragraphs  {"pages"}                           → JSON (with "source": "text-layer"|"ocr", "confidence")
 //	headings    {"pages"}                           → JSON
+//	formulas    {"pages"}                           → JSON (latex, mathml, text, number, bbox)
 //	search      {"query","regex","case_sensitive","whole_word","pages","max_results"} → JSON
 //	highlight   {"query",… as search, "color":"FFEB3B"} → PDF bytes
 //	extract_pages {"pages"}                         → PDF bytes
@@ -354,6 +355,29 @@ func call(doc *sarekpdf.Document, op string, a callArgs) ([]byte, error) {
 			b := p.Paragraph.BBox
 			out = append(out, jp{p.Page, p.Paragraph.Role.String(), p.Paragraph.Level, p.Paragraph.Text(),
 				p.Paragraph.Original, jsonRect{b.X0, b.Y0, b.X1, b.Y1}, p.Paragraph.Source().String(), p.Paragraph.Confidence()})
+		}
+		return json.Marshal(out)
+	case "formulas":
+		res, err := doc.Extract(ctx, pages...)
+		if res == nil {
+			return nil, err
+		}
+		type jf struct {
+			Page   int      `json:"page"`
+			LaTeX  string   `json:"latex"`
+			MathML string   `json:"mathml"`
+			Text   string   `json:"text"`
+			Number string   `json:"number,omitempty"`
+			BBox   jsonRect `json:"bbox"`
+		}
+		out := []jf{}
+		for _, pg := range res.Pages {
+			for _, b := range pg.Blocks {
+				if f, ok := b.(*model.Formula); ok {
+					bb := f.BBox
+					out = append(out, jf{pg.Number, f.LaTeX(), f.MathML(), f.Text(), f.Number, jsonRect{bb.X0, bb.Y0, bb.X1, bb.Y1}})
+				}
+			}
 		}
 		return json.Marshal(out)
 	case "headings":

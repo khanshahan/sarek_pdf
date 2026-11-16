@@ -12,12 +12,18 @@ import (
 // Font is a decoded font resource. It is immutable after Load and safe for
 // concurrent use.
 type Font struct {
-	Name       string // base font name without subset prefix
-	Family     string // best-effort family name (for export)
-	Bold       bool
-	Italic     bool
-	Monospace  bool
-	Serif      bool
+	Name      string // base font name without subset prefix
+	Family    string // best-effort family name (for export)
+	Bold      bool
+	Italic    bool
+	Monospace bool
+	Serif     bool
+	// HangsBelow marks TeX extension fonts (large operators, radicals,
+	// big delimiters), whose glyphs hang below the origin.
+	HangsBelow bool
+	// TeXSymbols marks TeX math symbol fonts (CMSY), whose radical sign
+	// also hangs below the origin.
+	TeXSymbols bool
 	Ascent     float64 // in text space units (per 1 unit of font size)
 	Descent    float64 // negative
 	Vertical   bool
@@ -143,6 +149,13 @@ func load(r *pdf.Reader, d pdf.Dict, cidMaps map[string]map[uint32]rune) *Font {
 	}
 	f.applyDescriptor(r, desc)
 	f.applyNameStyle()
+	ln := strings.ToLower(f.Name)
+	for _, p := range []string{"cmex", "lmmathextension", "txex", "pxex", "ntxexx", "esint"} {
+		if strings.HasPrefix(ln, p) {
+			f.HangsBelow = true
+		}
+	}
+	f.TeXSymbols = strings.HasPrefix(ln, "cmsy") || strings.HasPrefix(ln, "lmmathsymbols") || strings.HasPrefix(ln, "cmbsy")
 	if subtype == "Type3" {
 		f.type3 = true
 		if m := r.Numbers(d["FontMatrix"]); len(m) == 6 && m[0] != 0 {

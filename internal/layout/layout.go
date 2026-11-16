@@ -130,6 +130,11 @@ func Analyze(res *content.Result, images []*model.Image, opts Options) []model.B
 		}
 	}
 
+	// Display formulas (before drawings, so fraction bars stay with them).
+	formulas, inlineMath := detectFormulas(frags, res.Glyphs, res.Paths, usedPaths, page)
+	blocks = append(blocks, formulas...)
+	frags = append(frags, inlineMath...)
+
 	if opts.Drawings {
 		blocks = append(blocks, buildDrawings(res.Paths, usedPaths, frags, page)...)
 	}

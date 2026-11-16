@@ -52,6 +52,14 @@ namespace SarekPdf
         [property: JsonPropertyName("source")] string Source,
         [property: JsonPropertyName("confidence")] double Confidence);
 
+    public sealed record Formula(
+        [property: JsonPropertyName("page")] int Page,
+        [property: JsonPropertyName("latex")] string LaTeX,
+        [property: JsonPropertyName("mathml")] string MathML,
+        [property: JsonPropertyName("text")] string Text,
+        [property: JsonPropertyName("number")] string? Number,
+        [property: JsonPropertyName("bbox")] Rect BBox);
+
     /// <summary>Options used when opening a document.</summary>
     public sealed class OpenOptions
     {
@@ -168,6 +176,8 @@ namespace SarekPdf
             Encoding.UTF8.GetString(Call("markdown", new { pages, embed_images = embedImages }));
         public List<Paragraph> Paragraphs(string pages = "") => CallJson<List<Paragraph>>("paragraphs", new { pages });
         public List<Heading> Headings(string pages = "") => CallJson<List<Heading>>("headings", new { pages });
+        /// <summary>Display formulas with LaTeX, MathML and linear text.</summary>
+        public List<Formula> Formulas(string pages = "") => CallJson<List<Formula>>("formulas", new { pages });
         public List<SearchHit> Search(string query) => Search(new SearchOptions { Query = query });
         public List<SearchHit> Search(SearchOptions o) => CallJson<List<SearchHit>>("search", o);
         /// <summary>Returns a copy of the PDF with all matches highlighted.</summary>

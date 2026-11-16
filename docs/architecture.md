@@ -48,7 +48,7 @@ flowchart TB
     end
 
     subgraph Internal["internal/ (implementation)"]
-        LAYOUT["layout<br/>fragments · lines · XY-cut columns<br/>paragraphs · headings · tables<br/>drawings · bidi · OCR lines"]
+        LAYOUT["layout<br/>fragments · lines · XY-cut columns<br/>paragraphs · headings · tables<br/>formulas · drawings · bidi · OCR lines"]
         CONTENT["content<br/>content-stream interpreter<br/>glyphs · paths · image placements"]
         FONT["font<br/>encodings · CMaps · ToUnicode<br/>TrueType cmap · widths"]
         IMAGES["images<br/>JPEG/PNG export · CCITT G3/G4<br/>rasterise for OCR"]
@@ -92,7 +92,7 @@ flowchart TB
 | `internal/pdf` | Zero-copy lexer and parser, cross-reference tables and streams, object streams, hybrid files, automatic repair of broken files, stream filters (Flate, LZW, ASCII85, ASCIIHex, RunLength, predictors), standard security handler (RC4, AES-128, AES-256 R5/R6), object writer for incremental updates and page extraction. |
 | `internal/font` | Simple and composite fonts: standard encodings, `Differences`, ToUnicode and CID CMaps, Unicode recovery from embedded TrueType/OpenType `cmap` tables, glyph widths. |
 | `internal/content` | Executes content streams (text, paths, images, form XObjects, inline images) into positioned glyphs, vector paths and image placements in display coordinates. |
-| `internal/layout` | Turns glyphs into words, lines and paragraphs; recursive XY-cut reading order (any number of columns); headings, lists, alignment; ruled, rule-delimited and borderless tables; vector drawings; right-to-left reordering; layout of OCR lines. |
+| `internal/layout` | Turns glyphs into words, lines and paragraphs; recursive XY-cut reading order (any number of columns); headings, lists, alignment; ruled, rule-delimited and borderless tables; formula recognition from glyph geometry (display and inline); super/subscripts; vector drawings; right-to-left reordering; layout of OCR lines. |
 | `internal/images` | Image export (JPEG pass-through, PNG), CCITT G3/G4 decoder, rasterisation of page images for OCR. |
 | `internal/textnorm` | Deterministic normalisation tables (generated from the Unicode Character Database). |
 | `sarekpdf` (root) | Public API: opening, parallel extraction, page cache, search, headings, outline, highlighting, page extraction, OCR and correction orchestration. |
@@ -324,6 +324,23 @@ classDiagram
         +Data []byte
         +OCRSource bool
     }
+    class Formula {
+        +BBox Rect
+        +Root *MathNode
+        +Number string
+        +LaTeX() string
+        +MathML() string
+        +Text() string
+    }
+    class MathNode {
+        +Kind MathKind
+        +Text string
+        +Upright bool
+        +Children []*MathNode
+        +LaTeX() string
+        +MathML() string
+        +Linear() string
+    }
     class Line {
         +BBox Rect
         +Baseline float64
@@ -337,6 +354,9 @@ classDiagram
         +Invisible bool
         +Source Source
         +Confidence float64
+        +Script Script
+        +Math bool
+        +Formula *MathNode
     }
     class Source {
         <<enum>>
@@ -357,6 +377,8 @@ classDiagram
     Block <|.. Table
     Block <|.. Drawing
     Block <|.. Image
+    Block <|.. Formula
+    Formula --> MathNode
     Table "1" *-- "n" Cell
     Table --> Table : Next (continued on next page)
     Cell "1" *-- "n" Paragraph
@@ -547,7 +569,7 @@ sequenceDiagram
 | C function | Purpose |
 |---|---|
 | `sarek_open_file`, `sarek_open_bytes`, `sarek_open_url` | Open a document; return a handle. Options JSON: `password`, `workers`, `tables`, `drawings`, `images`, `ocr {models, lang, mode}`, `llm {url, model, concurrency}`. |
-| `sarek_call(handle, op, args_json, &out, &len, &err)` | Operations: `info`, `text`, `xml`, `docx`, `markdown`, `paragraphs`, `headings`, `search`, `highlight`, `extract_pages`. |
+| `sarek_call(handle, op, args_json, &out, &len, &err)` | Operations: `info`, `text`, `xml`, `docx`, `markdown`, `paragraphs`, `headings`, `formulas`, `search`, `highlight`, `extract_pages`. |
 | `sarek_close`, `sarek_free`, `sarek_version` | Release a handle, free returned buffers, report version. |
 
 All functions are thread-safe, convert panics into errors, and copy input buffers so

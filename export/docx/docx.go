@@ -9,6 +9,7 @@
 //   - images     → inline pictures (JPEG/PNG)
 //   - drawings   → inline SVG pictures with a PNG fallback
 //   - pages      → page breaks; page size from the first page
+//   - formulas   → native Word equations (OMML); scripts → vertAlign
 //   - OCR text   → "OCR Text" paragraph style (orange left bar) and a Word
 //     comment on each OCR page stating engine and mean confidence
 package docx
@@ -75,7 +76,7 @@ func Write(w io.Writer, doc *model.Document, o Options) error {
 	x.maxW = pw - margin[1] - margin[3]
 
 	x.sb.WriteString(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>`)
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><w:body>`)
 	for i, p := range doc.Pages {
 		if i > 0 && !o.NoPageBreaks {
 			x.sb.WriteString(`<w:p><w:r><w:br w:type="page"/></w:r></w:p>`)
@@ -195,7 +196,21 @@ func (x *writer) block(b model.Block) {
 		if !x.o.NoDrawings {
 			x.drawing(v)
 		}
+	case *model.Formula:
+		x.formula(v)
 	}
+}
+
+// formula writes a display formula as a centred native Word equation,
+// followed by its equation number.
+func (x *writer) formula(f *model.Formula) {
+	x.sb.WriteString(`<w:p><w:pPr><w:jc w:val="center"/></w:pPr><m:oMath>`)
+	x.sb.WriteString(omml(f.Root))
+	x.sb.WriteString(`</m:oMath>`)
+	if f.Number != "" {
+		x.sb.WriteString(`<w:r><w:t xml:space="preserve">    ` + esc(f.Number) + `</w:t></w:r>`)
+	}
+	x.sb.WriteString(`</w:p>`)
 }
 
 func (x *writer) paragraph(p *model.Paragraph) {
@@ -256,6 +271,10 @@ func (x *writer) run(r model.Run) {
 	if r.Text == "" {
 		return
 	}
+	if r.Formula != nil {
+		x.sb.WriteString("<m:oMath>" + omml(r.Formula) + "</m:oMath>")
+		return
+	}
 	x.sb.WriteString("<w:r><w:rPr>")
 	if f := r.Style.Font; f != "" {
 		fe := esc(f)
@@ -269,6 +288,12 @@ func (x *writer) run(r model.Run) {
 	}
 	if hasRTL(r.Text) {
 		x.sb.WriteString("<w:rtl/>")
+	}
+	switch r.Script {
+	case model.ScriptSuper:
+		x.sb.WriteString(`<w:vertAlign w:val="superscript"/>`)
+	case model.ScriptSub:
+		x.sb.WriteString(`<w:vertAlign w:val="subscript"/>`)
 	}
 	if c := r.Style.Color; c != (model.Color{}) {
 		fmt.Fprintf(&x.sb, `<w:color w:val="%s"/>`, c.Hex())

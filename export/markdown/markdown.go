@@ -6,6 +6,8 @@
 //   - list items    → "- item" (bullets) or "1. item" (numbered)
 //   - tables        → pipe tables; a table continued across pages is
 //     written once, merged; a merged cell's text is written once
+//   - formulas      → $$ LaTeX $$ (equation numbers as \tag); inline math → $…$
+//   - scripts       → <sup>/<sub> outside mathematics
 //   - images        → ![image](…) when an asset writer is set, or data URIs
 //   - drawings      → SVG assets ![drawing](…) with their text labels as alt text
 //   - OCR pages     → a visible notice before the page's content
@@ -107,6 +109,12 @@ func (x *writer) block(p *model.Page, b model.Block) {
 		if !x.o.NoDrawings {
 			x.drawing(p, v)
 		}
+	case *model.Formula:
+		tag := ""
+		if v.Number != "" {
+			tag = ` \tag{` + strings.Trim(v.Number, "()") + `}`
+		}
+		x.printf("$$\n%s%s\n$$\n\n", v.LaTeX(), tag)
 	}
 }
 
@@ -139,10 +147,38 @@ func listItem(p *model.Paragraph) string {
 }
 
 // styledRuns renders runs with **bold** / *italic* markers placed inside
-// surrounding whitespace, as Markdown requires.
+// surrounding whitespace, as Markdown requires. Inline mathematics becomes
+// $…$ (with its scripts); other superscripts/subscripts use <sup>/<sub>.
 func styledRuns(runs []model.Run) string {
 	var sb strings.Builder
-	for _, r := range runs {
+	for i := 0; i < len(runs); i++ {
+		r := runs[i]
+		if r.Formula != nil {
+			sb.WriteString(leadingSpace(r.Text) + "$" + r.Formula.LaTeX() + "$" + trailingSpace(r.Text))
+			continue
+		}
+		if r.Math {
+			// Collect the math run and the scripts that follow it.
+			var tex strings.Builder
+			j := i
+			for ; j < len(runs) && runs[j].Formula == nil && (runs[j].Math || runs[j].Script != model.ScriptNone && j > i); j++ {
+				t := strings.TrimSpace(oneLine(runs[j].Text))
+				node := &model.MathNode{Kind: model.MathOperator, Text: t}
+				switch runs[j].Script {
+				case model.ScriptSuper:
+					tex.WriteString("^{" + node.LaTeX() + "}")
+				case model.ScriptSub:
+					tex.WriteString("_{" + node.LaTeX() + "}")
+				default:
+					tex.WriteString(mathRunLaTeX(t))
+				}
+			}
+			lead := leadingSpace(r.Text)
+			trail := trailingSpace(runs[j-1].Text)
+			sb.WriteString(lead + "$" + tex.String() + "$" + trail)
+			i = j - 1
+			continue
+		}
 		t := oneLine(r.Text)
 		if t == "" {
 			continue
@@ -163,15 +199,41 @@ func styledRuns(runs []model.Run) string {
 		case r.Style.Italic:
 			mark = "*"
 		}
-		sb.WriteString(lead)
-		sb.WriteString(mark)
-		sb.WriteString(escape(core))
-		sb.WriteString(mark)
-		sb.WriteString(trail)
+		open, close := "", ""
+		switch r.Script {
+		case model.ScriptSuper:
+			open, close = "<sup>", "</sup>"
+		case model.ScriptSub:
+			open, close = "<sub>", "</sub>"
+		}
+		sb.WriteString(lead + open + mark + escape(core) + mark + close + trail)
 	}
 	out := strings.TrimSpace(sb.String())
 	return escapeLineStart(out)
 }
+
+// mathRunLaTeX converts a run of inline math text to LaTeX, character by
+// character (letters stay letters, π → \pi, ≤ → \leq, …).
+func mathRunLaTeX(t string) string {
+	row := &model.MathNode{Kind: model.MathRow}
+	for _, r := range t {
+		if r == ' ' {
+			continue
+		}
+		k := model.MathOperator
+		switch {
+		case unicode.IsLetter(r):
+			k = model.MathIdent
+		case unicode.IsDigit(r):
+			k = model.MathNumber
+		}
+		row.Children = append(row.Children, &model.MathNode{Kind: k, Text: string(r)})
+	}
+	return row.LaTeX()
+}
+
+func leadingSpace(s string) string  { return s[:len(s)-len(strings.TrimLeft(s, " "))] }
+func trailingSpace(s string) string { return s[len(strings.TrimRight(s, " ")):] }
 
 func oneLine(s string) string {
 	return strings.Map(func(r rune) rune {

@@ -105,7 +105,24 @@ type Span struct {
 	// Confidence is the OCR engine's confidence in [0,1] for OCR text;
 	// it is 1 for text-layer text.
 	Confidence float64
+	// Script is ScriptSuper or ScriptSub for raised/lowered smaller text
+	// (exponents, indices, footnote markers, chemical formulas).
+	Script Script
+	// Math marks text set in a mathematics font or made of math symbols.
+	Math bool
+	// Formula is set for an inline formula rebuilt from glyph geometry
+	// (fractions, radicals); Text then holds its linear form.
+	Formula *MathNode
 }
+
+// Script is the vertical position of a span relative to its line.
+type Script int8
+
+const (
+	ScriptNone  Script = 0
+	ScriptSuper Script = 1
+	ScriptSub   Script = -1
+)
 
 // Line is a visual line of text.
 type Line struct {
@@ -125,8 +142,11 @@ func (l *Line) Text() string {
 
 // Run is a styled piece of flowing paragraph text (used by exporters).
 type Run struct {
-	Text  string
-	Style Style
+	Text    string
+	Style   Style
+	Script  Script    // superscript / subscript
+	Math    bool      // inline mathematics
+	Formula *MathNode // inline formula structure (Text holds its linear form)
 }
 
 // Role classifies a paragraph.
@@ -423,6 +443,8 @@ func (p *Page) Text() string {
 				}
 				sb.WriteString(strings.Join(row, "\t"))
 			}
+		case *Formula:
+			sb.WriteString(v.Text())
 		case *Drawing:
 			for k, l := range v.Labels {
 				if k > 0 {

@@ -51,7 +51,11 @@ func (b *Builder) Bytes() []byte {
 endcmap CMapName currentdict /CMap defineresource pop end end`
 	tu := add(fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(cmap), cmap))
 	f4 := add(fmt.Sprintf("<< /Type /Font /Subtype /Type1 /BaseFont /Custom /FirstChar 1 /LastChar 3 /Widths [600 600 600] /Encoding << /Differences [1 /g1 /g2 /g3] >> /ToUnicode %d 0 R >>", tu))
-	res := fmt.Sprintf("<< /Font << /F1 %d 0 R /F2 %d 0 R /F3 %d 0 R /F4 %d 0 R >> >>", f1, f2, f3, f4)
+	// TeX math fonts (not embedded) with their glyph-name encodings.
+	f5 := add("<< /Type /Font /Subtype /Type1 /BaseFont /CMMI10 /Encoding << /Differences [11 /alpha /beta /gamma /delta 25 /pi] >> >>")
+	f6 := add("<< /Type /Font /Subtype /Type1 /BaseFont /CMSY10 /Encoding << /Differences [0 /minus 6 /plusminus 20 /lessequal 21 /greaterequal 49 /infinity 112 /radical] >> >>")
+	f7 := add("<< /Type /Font /Subtype /Type1 /BaseFont /CMEX10 /Encoding << /Differences [80 /summationtext 88 /summationdisplay 90 /integraldisplay] >> >>")
+	res := fmt.Sprintf("<< /Font << /F1 %d 0 R /F2 %d 0 R /F3 %d 0 R /F4 %d 0 R /F5 %d 0 R /F6 %d 0 R /F7 %d 0 R >> >>", f1, f2, f3, f4, f5, f6, f7)
 	var kids []string
 	for pi, c := range b.pages {
 		var cs string
@@ -111,6 +115,16 @@ func Text(font string, size, x, y float64, s string) string {
 func escape(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `(`, `\(`, `)`, `\)`)
 	return r.Replace(s)
+}
+
+// Glyph draws one character code (hex, e.g. "70") at (x, y).
+func Glyph(font string, size, x, y float64, hexCode string) string {
+	return fmt.Sprintf("BT /%s %g Tf %g %g Td <%s> Tj ET\n", font, size, x, y, hexCode)
+}
+
+// Rule draws a filled horizontal rule (fraction or radical bar).
+func Rule(x0, x1, y, thickness float64) string {
+	return fmt.Sprintf("0 0 0 rg %g %g %g %g re f\n", x0, y-thickness/2, x1-x0, thickness)
 }
 
 // Paragraph draws wrapped lines with the given leading.

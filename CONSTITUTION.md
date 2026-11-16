@@ -82,6 +82,9 @@ The library must support:
   pluggable engine. OCR output must always be identifiable as OCR
   (marked in the model and in every export) together with its confidence;
   scanned pages processed without OCR must be flagged, never silently empty.
+- **Formula recognition**: mathematics rebuilt only from glyph geometry and
+  drawn rules (never guessed), exported as LaTeX, MathML and native Word
+  equations.
 - **Search** (plain and regular expression) returning page numbers and
   match rectangles.
 - **Highlighting** of text (writing highlight annotations as an
@@ -123,3 +126,4 @@ stable C ABI (`c-shared` build) with thin language bindings.
 | 2026-11-16 | 5       | Multi-column reading order; OCR fallback with mandatory OCR labelling | Project owner |
 | 2026-11-16 | 1, 2.6  | License changed from proprietary to MIT with patent reservation | Project owner |
 | 2026-11-16 | 1, 2.6  | License changed to the standard, unmodified MIT License | Project owner |
+| 2026-11-16 | 5       | Markdown export, cross-page tables, formula recognition | Project owner |

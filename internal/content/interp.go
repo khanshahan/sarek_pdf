@@ -45,6 +45,11 @@ func (g *Glyph) BBox() model.Rect {
 	if desc > -0.05 || desc < -0.5 {
 		desc = -0.2
 	}
+	if g.Font != nil && (g.Font.HangsBelow || g.Font.TeXSymbols && g.Text == "√") {
+		// TeX extension glyphs are positioned by their top edge and hang
+		// below the origin.
+		asc, desc = 0.05, -1.2
+	}
 	pts := [4]model.Point{
 		{X: g.Origin.X + g.Up.X*desc, Y: g.Origin.Y + g.Up.Y*desc},
 		{X: g.End.X + g.Up.X*desc, Y: g.End.Y + g.Up.Y*desc},

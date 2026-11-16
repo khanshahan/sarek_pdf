@@ -101,7 +101,9 @@ func mergeSpans(sp []model.Span) []model.Span {
 	out := sp[:1]
 	for _, s := range sp[1:] {
 		last := &out[len(out)-1]
-		if sameStyle(last.Style, s.Style) && last.Invisible == s.Invisible && last.Source == s.Source && last.Confidence == s.Confidence {
+		if sameStyle(last.Style, s.Style) && last.Invisible == s.Invisible && last.Source == s.Source &&
+			last.Confidence == s.Confidence && last.Script == s.Script && last.Math == s.Math &&
+			last.Formula == nil && s.Formula == nil {
 			last.Text += s.Text
 			last.Edges = append(last.Edges[:len(last.Edges)-1], s.Edges...)
 			last.BBox = last.BBox.Union(s.BBox)
@@ -275,15 +277,17 @@ func hasLetter(s string) bool {
 // lowercase letters).
 func buildRuns(lines []model.Line) []model.Run {
 	var runs []model.Run
-	add := func(text string, st model.Style) {
+	add := func(text string, sp model.Span) {
 		if text == "" {
 			return
 		}
-		if n := len(runs); n > 0 && sameStyle(runs[n-1].Style, st) {
+		if n := len(runs); n > 0 && sameStyle(runs[n-1].Style, sp.Style) && runs[n-1].Script == sp.Script &&
+			runs[n-1].Formula == nil && sp.Formula == nil &&
+			(runs[n-1].Math == sp.Math || strings.TrimSpace(text) == "") {
 			runs[n-1].Text += text
 			return
 		}
-		runs = append(runs, model.Run{Text: text, Style: st})
+		runs = append(runs, model.Run{Text: text, Style: sp.Style, Script: sp.Script, Math: sp.Math, Formula: sp.Formula})
 	}
 	for i, l := range lines {
 		for j, s := range l.Spans {
@@ -306,7 +310,7 @@ func buildRuns(lines []model.Line) []model.Run {
 			if j == 0 && i > 0 {
 				t = strings.TrimLeft(t, " ")
 			}
-			add(t, s.Style)
+			add(t, s)
 		}
 	}
 	if n := len(runs); n > 0 {

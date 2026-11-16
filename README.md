@@ -6,6 +6,9 @@ High-performance, dependency-free PDF extraction for Go, Python and .NET.
 * **OCR fallback** for scanned pages (pluggable engine; OCR text is always marked as OCR)
 * **Tables** with structure (ruled grids incl. merged cells, borderless and rule-delimited tables),
   including tables **continued across pages** (linked, merged on export, repeated headers removed)
+* **Formulas**: display and inline mathematics rebuilt from glyph geometry (fractions, roots,
+  sub/superscripts, large operators with limits, equation numbers) → LaTeX, MathML and native
+  Word equations; superscripts/subscripts in ordinary text (x², H₂O, footnote marks)
 * **Drawings** (vector paths → SVG / DOCX) and **images** (JPEG pass-through, PNG)
 * **Search** (plain / regex / whole-word) with match rectangles, **highlighting** (incremental update)
 * **Page extraction**, page count, metadata, outline/bookmarks
@@ -120,6 +123,9 @@ with Document.open("report.pdf") as doc:          # also Document.from_bytes(dat
     for p in doc.paragraphs(pages="1-3"):
         print(p["page"], p["source"], p["text"][:80])   # source: "text-layer" or "ocr"
 
+    for f in doc.formulas():                     # LaTeX, MathML and plain text
+        print(f["page"], f["number"], f["latex"])
+
     for hit in doc.search("revenue"):
         print("found on page", hit["page"], hit["rects"])
 
@@ -167,6 +173,28 @@ Measured on this repository's test corpus (Apple M-series, 14 cores):
 | Throughput, 200-page synthetic document | 2,460 pages/s (1 core), 13,600 pages/s (14 cores) |
 | Reading order, 2- and 3-column layouts (spanning titles, aligned baselines, unequal widths) | all test layouts correct |
 | OCR, 200 dpi 3-column scan (PaddleOCR v5, CPU) | 100 % word recall, 99.2 % mean confidence, ~1.4 s/page |
+
+## Formulas
+
+Mathematics in born-digital PDFs (LaTeX, Word equations, …) is rebuilt from the positions of
+its glyphs and of the rules drawn as fraction and radical bars, so nothing is guessed:
+
+| PDF content | Result |
+|---|---|
+| Displayed formula | `model.Formula` block with a structure tree (`Root`), `LaTeX()`, `MathML()`, `Text()` and equation `Number` |
+| Inline fraction or root in a sentence | kept in place in the paragraph as an inline formula (`Run.Formula`) |
+| Other inline math (math fonts, symbols) | `Run.Math`; scripts as `Run.Script` |
+| Superscript / subscript text | `Span.Script` / `Run.Script` (x², H₂O, footnote markers) |
+
+Exports: Markdown `$$…$$` / `$…$` (with `\tag{n}`), DOCX native editable equations (OMML)
+and `w:vertAlign` for scripts, XML `<formula>` with `<latex>`, `<text>` and MathML.
+
+On "Attention Is All You Need" (arXiv:1706.03762) all six displayed formulas and the inline
+fractions/roots are recovered, e.g. `\mathrm{Attention}(Q,K,V) = \mathrm{softmax}(\frac{QK^{T}}{\sqrt{d_{k}}})V`.
+No formulas were reported on the 1,800 non-mathematical test documents.
+
+Limits: formulas in scanned images need an image-based recogniser (not included); matrices and
+multi-line alignments are output row by row; a line that starts with prose ("where …") stays text.
 
 ## OCR fallback for scanned pages
 

@@ -16,6 +16,7 @@
 //	    </table>
 //	    <drawing x y w h><path d stroke fill stroke-width fill-rule/><label/></drawing>
 //	    <image x y w h width height format ocr-source>base64?</image>
+//	    <formula display number x y w h><latex/><text/><math …MathML…/></formula>
 //	    <ocr engine reason lines confidence/>   only on pages that were OCR'd
 //
 // Text recognised by OCR carries source="ocr" and confidence="0.000–1.000"
@@ -214,6 +215,8 @@ func (x *writer) page(p *model.Page) {
 			x.drawing(v)
 		case *model.Image:
 			x.image(v)
+		case *model.Formula:
+			x.formula(v)
 		}
 	}
 	x.close("page")
@@ -263,6 +266,15 @@ func (x *writer) line(l *model.Line, tag string) {
 		}
 		if s.Source == model.SourceOCR {
 			attrs = append(attrs, "source", "ocr", "confidence", strconv.FormatFloat(s.Confidence, 'f', 3, 64))
+		}
+		switch s.Script {
+		case model.ScriptSuper:
+			attrs = append(attrs, "script", "super")
+		case model.ScriptSub:
+			attrs = append(attrs, "script", "sub")
+		}
+		if s.Math {
+			attrs = append(attrs, "math", "true")
 		}
 		attrs = append(attrs, box(s.BBox)...)
 		x.open("span", attrs...)
@@ -366,6 +378,18 @@ func (x *writer) drawing(d *model.Drawing) {
 		x.line(&d.Labels[i], "label")
 	}
 	x.close("drawing")
+}
+
+func (x *writer) formula(f *model.Formula) {
+	attrs := []string{"display", "block"}
+	if f.Number != "" {
+		attrs = append(attrs, "number", f.Number)
+	}
+	x.open("formula", append(attrs, box(f.BBox)...)...)
+	x.elem("latex", f.LaTeX())
+	x.elem("text", f.Text())
+	x.raw(f.MathML()) // MathML is generated XML, already escaped
+	x.close("formula")
 }
 
 func (x *writer) image(im *model.Image) {

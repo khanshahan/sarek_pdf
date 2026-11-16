@@ -28,6 +28,8 @@ type frag struct {
 	dir      model.Point // rotated text: unit advance direction
 	lastEnd  model.Point // rotated text: end of the previous glyph
 	tb       [][]byte    // span text under construction (see finalize)
+	sbase    []float64   // baseline of each span's first glyph
+	gidx     []int32     // indices of the glyphs that make up the fragment
 }
 
 // finalize converts the byte buffers into span strings (one allocation
@@ -35,8 +37,19 @@ type frag struct {
 func (f *frag) finalize() {
 	for i := range f.spans {
 		f.spans[i].Text = string(f.tb[i])
+		// Smaller text raised or lowered against the fragment baseline is a
+		// superscript or subscript (y grows downwards).
+		if i < len(f.sbase) && !f.rotated && f.spans[i].Style.Size < 0.9*f.size {
+			switch d := f.sbase[i] - f.baseline; {
+			case d < -0.15*f.size:
+				f.spans[i].Script = model.ScriptSuper
+			case d > 0.08*f.size:
+				f.spans[i].Script = model.ScriptSub
+			}
+		}
 	}
 	f.tb = nil
+	f.sbase = nil
 }
 
 func (f *frag) text() string {
@@ -67,19 +80,27 @@ func sameStyle(a, b model.Style) bool {
 // appendText adds text with per-rune edges to the last span of f, or
 // starts a new span when the style changes.
 func (f *frag) appendText(text string, x0, x1 float64, st model.Style, bb model.Rect, invisible bool) {
+	f.appendGlyph(text, x0, x1, st, bb, invisible, false, bb.Y1)
+}
+
+// appendGlyph adds text with per-rune edges, continuing the last span when
+// style, math flag and baseline class match.
+func (f *frag) appendGlyph(text string, x0, x1 float64, st model.Style, bb model.Rect, invisible, math bool, base float64) {
 	n := utf8.RuneCountInString(text)
 	if n == 0 {
 		return
 	}
 	var sp *model.Span
-	if k := len(f.spans); k > 0 && sameStyle(f.spans[k-1].Style, st) && f.spans[k-1].Invisible == invisible {
+	if k := len(f.spans); k > 0 && sameStyle(f.spans[k-1].Style, st) && f.spans[k-1].Invisible == invisible &&
+		(f.spans[k-1].Math == math || text == " ") {
 		sp = &f.spans[k-1]
 		sp.BBox = sp.BBox.Union(bb)
 		sp.Edges = sp.Edges[:len(sp.Edges)-1] // replace trailing right edge
 		f.tb[k-1] = append(f.tb[k-1], text...)
 	} else {
-		f.spans = append(f.spans, model.Span{Style: st, BBox: bb, Invisible: invisible, Confidence: 1, Edges: make([]float64, 0, 32)})
+		f.spans = append(f.spans, model.Span{Style: st, BBox: bb, Invisible: invisible, Confidence: 1, Math: math, Edges: make([]float64, 0, 32)})
 		f.tb = append(f.tb, append(make([]byte, 0, 64), text...))
+		f.sbase = append(f.sbase, base)
 		sp = &f.spans[len(f.spans)-1]
 	}
 	step := (x1 - x0) / float64(n)
@@ -159,6 +180,7 @@ func buildFragments(glyphs []content.Glyph, page model.Rect) []*frag {
 				cur.pendSp = false
 			}
 			cur.appendText(text, bb.X0, bb.X1, st, bb, g.Invisible)
+			cur.gidx = append(cur.gidx, int32(i))
 			cur.lastEnd = g.End
 			continue
 		}
@@ -178,7 +200,8 @@ func buildFragments(glyphs []content.Glyph, page model.Rect) []*frag {
 			}
 			if cur != nil {
 				cur.pendSp = false
-				cur.appendText(text, x0, x1, st, bb, g.Invisible)
+				cur.appendGlyph(text, x0, x1, st, bb, g.Invisible, isMathGlyph(g, text), g.Origin.Y)
+				cur.gidx = append(cur.gidx, int32(i))
 				if g.Size > cur.size {
 					cur.size = g.Size
 					cur.baseline = g.Origin.Y
@@ -187,7 +210,8 @@ func buildFragments(glyphs []content.Glyph, page model.Rect) []*frag {
 			}
 		}
 		cur = &frag{baseline: g.Origin.Y, size: g.Size, bbox: bb, lastX1: x0}
-		cur.appendText(text, x0, x1, st, bb, g.Invisible)
+		cur.appendGlyph(text, x0, x1, st, bb, g.Invisible, isMathGlyph(g, text), g.Origin.Y)
+		cur.gidx = append(cur.gidx, int32(i))
 		out = append(out, cur)
 	}
 	for _, f := range out {
@@ -258,6 +282,7 @@ func trimSpaces(f *frag) {
 		if len(s.Text) > 0 && s.Text[0] == ' ' {
 			s.Text = s.Text[1:]
 			s.Edges = s.Edges[1:]
+			s.BBox.X0 = s.Edges[0]
 			if s.Text == "" {
 				f.spans = f.spans[1:]
 				continue
@@ -270,6 +295,7 @@ func trimSpaces(f *frag) {
 		if n := len(s.Text); n > 0 && s.Text[n-1] == ' ' {
 			s.Text = s.Text[:n-1]
 			s.Edges = s.Edges[:len(s.Edges)-1]
+			s.BBox.X1 = s.Edges[len(s.Edges)-1]
 			if s.Text == "" {
 				f.spans = f.spans[:len(f.spans)-1]
 				continue

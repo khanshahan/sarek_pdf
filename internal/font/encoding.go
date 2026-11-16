@@ -137,7 +137,23 @@ angleleft:2329 angleright:232A filledbox:25A0 H22073:25A1 H18543:25AA H18551:25A
 triagup:25B2 triagrt:25BA triagdn:25BC triaglf:25C4 lozenge:25CA circle:25CB H18533:25CF openbullet:25E6
 invbullet:25D8 invcircle:25D9 smileface:263A sun:263C female:2640 male:2642 spade:2660 club:2663
 heart:2665 diamond:2666 musicalnote:266A checkmark:2713 ff:FB00 fi:FB01 fl:FB02 ffi:FB03 ffl:FB04
-dotlessi.sc:131 nbsp:A0 Ohm:2126 micro:B5 periodcentered.loclCAT:B7`
+dotlessi.sc:131 nbsp:A0 Ohm:2126 micro:B5 periodcentered.loclCAT:B7
+minusplus:2213 multiply:D7 asteriskmath:2217 diamondmath:22C4 circleminus:2296 circledivide:2298
+circledot:2299 bigcircle:25EF equivasymptotic:224D lessmuch:226A greatermuch:226B precedes:227A
+follows:227B precedesequal:2AAF followsequal:2AB0 subsetsqequal:2291 supersetsqequal:2292 owner:220B
+prime:2032 nabla:2207 negationslash:338 mapsto:21A6 floorleft:230A floorright:230B ceilingleft:2308
+ceilingright:2309 bardbl:2016 turnstileleft:22A2 turnstileright:22A3 latticetop:22A4 wreathproduct:2240
+coproducttext:2210 coproductdisplay:2210 epsilon1:3B5 rho1:3F1 pi1:3D6 sigma1:3C2 tie:2040
+radicalbig:221A radicalBig:221A radicalbigg:221A radicalBigg:221A radicalbt:221A
+summationtext:2211 summationdisplay:2211 producttext:220F productdisplay:220F integraltext:222B
+integraldisplay:222B contintegraltext:222E contintegraldisplay:222E uniontext:22C3 uniondisplay:22C3
+intersectiontext:22C2 intersectiondisplay:22C2 logicalortext:22C1 logicalordisplay:22C1
+logicalandtext:22C0 logicalanddisplay:22C0 circleplustext:2A01 circleplusdisplay:2A01
+circlemultiplytext:2A02 circlemultiplydisplay:2A02 angbracketleft:27E8 angbracketright:27E9`
+
+// texDelimiterSuffixes are size variants of TeX extension-font delimiters
+// ("parenleftbig", "bracketrightBigg") that map to the base delimiter.
+var texDelimiterSuffixes = []string{"Bigg", "bigg", "Big", "big"}
 
 var glyphMap = func() map[string]rune {
 	m := make(map[string]rune, 600)
@@ -165,6 +181,13 @@ func GlyphToUnicode(name string) string {
 		name = name[:i] // drop suffix like ".sc", ".alt"
 		if r, ok := glyphMap[name]; ok {
 			return string(r)
+		}
+	}
+	for _, suf := range texDelimiterSuffixes {
+		if base := strings.TrimSuffix(name, suf); base != name {
+			if r, ok := glyphMap[base]; ok {
+				return string(r)
+			}
 		}
 	}
 	if strings.Contains(name, "_") {
